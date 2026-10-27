@@ -1,0 +1,13 @@
+[flake8]
+max-complexity = 10
+max-line-length = 88
+
+extend-ignore =
+    # Let formatting take care of line length (not flake8)
+    E501
+    E203
+
+per-file-ignores =
+    # Ignore complex mains in these scripts for now
+    # We should aim is to address all of these in the future
+    src/signaloid_benchmarking/*: C901

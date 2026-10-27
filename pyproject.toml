@@ -1,0 +1,107 @@
+[tool.poetry]
+name = "signaloid-benchmarking"
+version = "0.0.0"
+description = "Signaloid benchmarking tools for comparing applications that use Signaloid's UxHw® technology for distributional arithmetic against equivalent Monte Carlo methods."
+readme = "README.md"
+license = "MIT"
+homepage = "https://signaloid.com"
+repository = "https://github.com/signaloid/signaloid-benchmarking"
+authors = [
+	"Signaloid <info@signaloid.com>"
+]
+
+packages = [
+	{ include = "signaloid_benchmarking", from = "src" }
+]
+
+# The build-template assets are a submodule, so they must be listed explicitly
+# to ship in the built distributions. Requires the submodule to be checked out
+# at build time.
+include = [
+	{ path = "src/signaloid_benchmarking/assets/**/*", format = ["sdist", "wheel"] },
+]
+
+[tool.poetry-dynamic-versioning]
+enable = true
+vcs = "git"
+style = "pep440"
+
+
+[tool.poetry.group.dev.dependencies]
+wheel = "^0.46.3"
+pytest = "^9.0.3"
+mypy = "^1.19.1"
+flake8 = "^7.3.0"
+black = "^26.3.1"
+pandas-stubs = "^2.2.0.240218"
+types-tqdm = "^4.66.0.20240106"
+types-tabulate = "^0.9.0"
+types-PyYAML = "^6.0.0"
+# Only the parity test of the Wasserstein distance uses POT.
+POT = ">=0.9.3"
+
+[build-system]
+requires = ["poetry-core>=1.9.1", "poetry-dynamic-versioning>=1.0.0,<2.0.0"]
+build-backend = "poetry_dynamic_versioning.backend"
+
+[tool.poetry.dependencies]
+python = ">=3.11,<4"
+# The Signaloid Data Toolkit (the `signaloid` package on PyPI) provides the Ux
+# Data parsing, distance metrics and plotting that the benchmarking tools build
+# on. `poetry lock` picks its newest 2.x release.
+signaloid = "^2.0.0"
+numpy = [
+	{ version = ">=2.0.0", python = ">=3.11,<3.13" },
+	{ version = ">=2.1.0", python = ">=3.11,<3.14" },
+	{ version = ">=2.4.1", python = ">=3.11,<3.15" },
+]
+matplotlib = [
+	{ version = ">=3.9.0", python = ">=3.11,<3.13" },
+	{ version = ">=3.10.0", python = ">=3.11,<3.14" },
+	{ version = ">=3.10.5", python = ">=3.11,<3.15" },
+]
+pyyaml = ">=6.0.0"
+scipy = ">=1.14.0"
+pandas = "^2.0"
+tabulate = "^0.9.0"
+tqdm = "^4.66.2"
+
+# Only the Google-Sheets reporting backend is an optional extra (see
+# [tool.poetry.extras]). Everything else ships as a plain dependency so the
+# benchmarking timing harness works on a straight install.
+gspread = { version = "^6.2.1", optional = true }
+google-api-python-client = { version = "^2.171.0", optional = true }
+oauth2client = { version = "^4.1.3", optional = true }
+# These packages are transitive dependencies (coming via the Google-Sheets
+# backend above). Here we pin them to their minimum secure versions.
+# They are installed with the ``sheets`` extra.
+pyasn1 = { version = ">=0.6.4", optional = true }
+# rsa >=4.3 caps Python at <4, so the floor is scoped to python <4. For
+# python >=4 it falls back to rsa's older unbounded release
+# transitively, matching the existing resolution split.
+rsa = { version = ">=4.7", optional = true, python = "<4" }
+cryptography = { version = ">=50.0.0", optional = true }
+httplib2 = { version = ">=0.32.0", optional = true }
+oauthlib = { version = ">=4.0.0", optional = true }
+urllib3 = { version = ">=2.8.0", optional = true }
+
+[tool.poetry.extras]
+sheets = ["gspread", "google-api-python-client", "oauth2client", "pyasn1", "rsa", "cryptography", "httplib2", "oauthlib", "urllib3"]
+
+[tool.poetry.scripts]
+signaloid-benchmarking = "signaloid_benchmarking.automation.benchmark_application:main"
+signaloid-memory-profile = "signaloid_benchmarking.profiling.memory_profile:main"
+distance_uxhw_vs_mc = "signaloid_benchmarking.differential_accuracy.distance_uxhw_vs_mc:main"
+ks_convergence_gate = "signaloid_benchmarking.differential_accuracy.ks_convergence_gate:main"
+
+[tool.mypy]
+warn_unused_configs = true
+strict = true
+disallow_any_generics = false
+python_version = "3.11"
+exclude = '(^|/)\.venv/'
+# Resolve this repository's sources from the source tree rather than from the
+# installed distribution, so `mypy -p signaloid_benchmarking` reports errors
+# in them instead of treating them as a silent installed package.
+mypy_path = "src"
+

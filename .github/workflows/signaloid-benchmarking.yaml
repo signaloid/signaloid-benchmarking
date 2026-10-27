@@ -1,0 +1,142 @@
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "master", "main" ]
+  pull_request:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+env:
+  POETRY_CACHE_DIR: ~/.cache/pypoetry
+
+jobs:
+  check-submodules:
+    name: Check submodules
+
+    runs-on: ubuntu-26.04
+
+    steps:
+    - name: Checkout the PR branch
+      uses: actions/checkout@v6
+      with:
+        ref: ${{ github.head_ref }}
+        submodules: recursive
+        token: ${{ secrets.CI_HELPER_PAT || github.token }}
+
+    - name: Check submodules are up to date
+      # The fetch below reuses the credentials actions/checkout persisted into
+      # each submodule, so this works whether the assets remote is private or
+      # public.
+      run: |
+        git submodule foreach --quiet --recursive '
+          branch=$(git config -f "$toplevel/.gitmodules" "submodule.$name.branch" || echo HEAD)
+          git fetch --quiet origin "$branch"
+          pinned=$(git rev-parse HEAD)
+          latest=$(git rev-parse FETCH_HEAD)
+          if [ "$pinned" != "$latest" ]; then
+            echo "::error::Submodule $sm_path is behind origin/$branch. Pinned $pinned, latest $latest. Update it with: git submodule update --remote $sm_path && git add $sm_path"
+            exit 1
+          fi
+          echo "Submodule $sm_path is up to date with origin/$branch ($pinned)"
+        '
+
+  run:
+    # Every other job waits on the submodule check, so a stale submodule fails
+    # the workflow before the matrix spends any runner time.
+    needs: check-submodules
+
+    strategy:
+      matrix:
+        args:
+          - host: ubuntu-26.04
+          - host: macos-14
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+
+    runs-on:  ${{ matrix.args.host }}
+
+    env:
+      LOGLEVEL: info
+
+    steps:
+    - name: Checkout the PR branch
+      uses: actions/checkout@v6
+      with:
+        ref: ${{ github.head_ref }}
+        fetch-depth: 0
+        fetch-tags: true
+        # The build-template assets are a submodule, and `pyproject.toml`
+        # includes them in the built distributions.
+        submodules: recursive
+        token: ${{ secrets.CI_HELPER_PAT || github.token }}
+
+    - name: Debug
+      run: |
+        echo "github.event_name:" ${{ github.event_name }}
+        echo "github.event.pull_request.head.sha:" ${{ github.event.pull_request.head.sha }}
+        echo "github.sha:" ${{ github.sha }}
+        echo "github.event.release.tag_name:" ${{ github.event.release.tag_name }}
+        echo "contains(github.event.pull_request.labels.*.name, 'ci:upload-binaries'):" ${{ contains(github.event.pull_request.labels.*.name, 'ci:upload-binaries') }}
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install Poetry Action
+      # The same major version that wrote poetry.lock (lock-version 2.1),
+      # which Poetry 1 cannot read.
+      run: python -m pip install poetry==2.3.2
+
+    - name: Print Poetry version
+      run: poetry --version
+
+    - name: List Current Directory
+      run: ls
+
+    - name: Install
+      # Testing needs the optional dependencies
+      run: poetry install --all-extras
+
+    - name: Install Poetry plugins
+      run: poetry self add "poetry-dynamic-versioning[plugin]>=1.0.0,<2.0.0"
+
+    - name: Print Python Information
+      run: |
+        which python
+        pip freeze
+
+    - name: Lint
+      run: poetry run flake8 src/
+
+    - name: Check format
+      run: poetry run black --check src/
+
+    - name: Typecheck
+      # Run mypy just once on the oldest supported Python version
+      if: ${{ matrix.args.host == 'ubuntu-26.04' && matrix.python-version == '3.11' }}
+      run: poetry run mypy -p signaloid_benchmarking
+
+    - name: Test
+      run: poetry run pytest
+
+    - name: Build
+      run: poetry build
+
+    - name: Upload wheels
+      if: ${{ startsWith(matrix.args.host, 'ubuntu') && matrix.python-version == '3.11' }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: "wheel-${{ github.event.pull_request.head.sha || github.sha }}"
+        path: |
+          ./dist/*
+
+    # Upload the artifact to the GitHub release
+    - name: Upload Release Asset
+      if: ${{ github.event_name == 'release' && startsWith(matrix.args.host, 'ubuntu') && matrix.python-version == '3.11' }}
+      run: |
+        gh release upload ${{ github.event.release.tag_name }} dist/*
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
