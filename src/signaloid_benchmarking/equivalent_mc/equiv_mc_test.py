@@ -134,7 +134,7 @@ def _build_synthetic_tracing_db(directory: Path) -> str:
     test, replacing the large committed ``inputs/tracing.db`` fixture.
 
     Carries the same three expressions (at the same Gaussian centres as the
-    synthetic ground truth) under both correlation-tracking statuses, matching
+    synthetic ground truth) under both dependency tracking statuses, matching
     the shape the original fixture provided.
     """
     expressions = [
@@ -341,7 +341,7 @@ class TestEquivMc(unittest.TestCase):
                                 "uxhw_table_names": [EquivMC.TRACING_TABLE],
                                 "uxhw_ur_types": [RepresentationTypes.ATHENS],
                                 "uxhw_ur_sizes": [16],
-                                "correlations": [],
+                                "dependency_tracking_modes": [],
                                 "distance_type": options["distance_type"],
                                 "n_processes": 1,
                                 "n_adversaries": 4,

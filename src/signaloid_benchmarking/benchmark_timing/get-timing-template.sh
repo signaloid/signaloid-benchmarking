@@ -36,9 +36,11 @@ APPEND_TO_OUTPUT_FILE=1
 
 REPRESENTATION_TYPES=(Athens)
 REPRESENTATION_SIZES=(64 128 256 512)
-CORRELATION_TRACKING_TYPES=(Disabled Autocorrelation)
+DEPENDENCY_TRACKING_TYPES=(None Basic)
+# How the SDK names Rome. Atlas on an SDK from before the rename.
+SDK_ROME_REPRESENTATION_TYPE=Rome
 # Configurations to leave out, named as in the results, for example
-# Europa-8-Autocorrelation. The Python tool fills this in from the runtime
+# Athens-8-Basic. The Python tool fills this in from the runtime
 # libraries the SDK ships. Run standalone, list any combination above that the
 # SDK has no library for, or the build fails at link time.
 SKIPPED_CONFIGURATIONS=()

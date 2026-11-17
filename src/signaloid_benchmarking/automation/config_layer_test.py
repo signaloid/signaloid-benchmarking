@@ -18,6 +18,8 @@
 #   FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 #   DEALINGS IN THE SOFTWARE.
 
+import contextlib
+import io
 import os
 import sys
 import tempfile
@@ -33,6 +35,7 @@ from signaloid_benchmarking.automation.arguments import (
     validate_args,
 )
 from signaloid_benchmarking.automation.benchmark_application import (
+    _print_effective_config,
     load_config,
 )
 
@@ -50,7 +53,7 @@ def _base_config() -> Dict[str, Any]:
     return {
         "representation_types": ["Athens"],
         "representation_sizes": [16, 64],
-        "correlations": ["Disabled"],
+        "dependency_tracking": ["None"],
         "reporting_methods": ["Mean"],
     }
 
@@ -77,10 +80,107 @@ class TestConfigLayer(unittest.TestCase):
 
         self.assertEqual(args.representation_types, ["Athens"])
         self.assertEqual(args.representation_sizes, [16, 64])
-        self.assertEqual(args.correlations, ["Disabled"])
+        self.assertEqual(args.dependency_tracking, ["None"])
         self.assertEqual(args.reporting_methods, ["Mean"])
         # validate_args must accept a file-populated sweep.
         validate_args(args)
+
+    def test_earlier_names_on_the_command_line_are_translated(self) -> None:
+        self._set_argv(
+            [
+                "prog",
+                "-u",
+                "Atlas",
+                "Rome",
+                "-s",
+                "16",
+                "-c",
+                "Disabled",
+                "Autocorrelation",
+                "-r",
+                "Mean",
+            ]
+        )
+
+        args = load_config(create_argument_parser())
+
+        self.assertEqual(args.representation_types, ["Rome"])
+        self.assertEqual(args.dependency_tracking, ["None", "Basic"])
+        validate_args(args)
+
+    def test_disabled_keeps_its_meaning_for_advanced_types(self) -> None:
+        """Disabled was Jupiter's only mode, which Advanced builds now."""
+        for types, expected in (
+            (["Jupiter"], ["Advanced"]),
+            (["Athens"], ["None"]),
+            (["Athens", "Jupiter"], ["None", "Advanced"]),
+        ):
+            with self.subTest(types=types):
+                self._set_argv(
+                    ["prog", "-u", *types, "-s", "8", "-c", "Disabled", "-r", "Mean"]
+                )
+
+                args = load_config(create_argument_parser())
+
+                self.assertEqual(args.dependency_tracking, expected)
+                validate_args(args)
+
+    def test_disabled_in_a_config_file_keeps_its_meaning(self) -> None:
+        """An old preset for Jupiter still runs Jupiter."""
+        config = _base_config()
+        del config["dependency_tracking"]
+        config["representation_types"] = ["Jupiter"]
+        config["correlations"] = ["Disabled", "Autocorrelation"]
+        config_path = _write_config(self.tmp_path, config)
+        self._set_argv(["prog", "--config", config_path])
+
+        args = load_config(create_argument_parser())
+
+        self.assertEqual(args.dependency_tracking, ["Advanced", "Basic"])
+
+    def test_earlier_names_in_a_config_file_are_translated(self) -> None:
+        config = _base_config()
+        del config["dependency_tracking"]
+        config["correlations"] = ["Disabled", "Autocorrelation"]
+        config["representation_types"] = ["Atlas"]
+        config_path = _write_config(self.tmp_path, config)
+        self._set_argv(["prog", "--config", config_path])
+
+        args = load_config(create_argument_parser())
+
+        self.assertEqual(args.representation_types, ["Rome"])
+        self.assertEqual(args.dependency_tracking, ["None", "Basic"])
+        validate_args(args)
+
+    def test_print_config_leaves_out_pairs_the_run_skips(self) -> None:
+        """Athens has no Advanced, and Jupiter has nothing else."""
+        self._set_argv(
+            [
+                "prog",
+                "-u",
+                "Athens",
+                "Jupiter",
+                "-s",
+                "8",
+                "-d",
+                "None",
+                "Advanced",
+                "-r",
+                "Mean",
+            ]
+        )
+        args = load_config(create_argument_parser())
+
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            _print_effective_config(args)
+
+        output = printed.getvalue()
+        self.assertIn("2 combinations", output)
+        self.assertIn("Athens | size=8 | None | Mean", output)
+        self.assertIn("Jupiter | size=8 | Advanced | Mean", output)
+        self.assertNotIn("Athens | size=8 | Advanced", output)
+        self.assertNotIn("Jupiter | size=8 | None", output)
 
     def test_cli_overrides_config_value(self) -> None:
         config_path = _write_config(self.tmp_path, _base_config())
@@ -176,12 +276,12 @@ class TestConfigLayer(unittest.TestCase):
 
     def test_partial_config_missing_one_sweep_arg_raises(self) -> None:
         config = _base_config()
-        del config["correlations"]
+        del config["dependency_tracking"]
         config_path = _write_config(self.tmp_path, config)
         self._set_argv(["prog", "--config", config_path])
 
         args = load_config(create_argument_parser())
-        with self.assertRaisesRegex(ValueError, "correlations"):
+        with self.assertRaisesRegex(ValueError, "dependency_tracking"):
             validate_args(args)
 
     def test_unknown_config_key_rejected(self) -> None:
@@ -311,6 +411,16 @@ class TestConfigLayer(unittest.TestCase):
 
         args = load_config(create_argument_parser())
         self.assertFalse(args.use_binned_uxhw)
+
+    def test_use_clt_defaults_true(self) -> None:
+        parser = create_argument_parser()
+        args = parser.parse_args([])
+        self.assertTrue(args.use_clt)
+
+    def test_use_clt_disableable_from_cli(self) -> None:
+        parser = create_argument_parser()
+        args = parser.parse_args(["--no-use-clt"])
+        self.assertFalse(args.use_clt)
 
 
 if __name__ == "__main__":

@@ -22,7 +22,7 @@
 Unit tests for ``ks_convergence_gate``.
 
 These tests cover the either-side decision, the choice of the largest size,
-the grouping by correlation mode and occurrence, the precomputed CDF, the
+the grouping by dependency tracking mode and occurrence, the precomputed CDF, the
 tie-aware statistic and bootstrap, the handling of non-finite mass and of
 scalar variables, the yaml handling and the report filtering. The end-to-end
 tests run ``main`` on a report that ``distance_uxhw_vs_mc`` writes from small
@@ -41,7 +41,7 @@ from scipy.stats import ks_1samp, norm  # type: ignore
 from signaloid_benchmarking.automation.database_generator import (
     generate_database_from_mc_samples,
 )
-from signaloid_benchmarking.config import Correlations
+from signaloid_benchmarking.config import DependencyTracking
 from signaloid_benchmarking.differential_accuracy import distance_uxhw_vs_mc
 from signaloid_benchmarking.differential_accuracy import (
     ks_convergence_gate as gate,
@@ -82,7 +82,7 @@ def tagged(dv: DistributionalValue, size: int, mode: str) -> TaggedDistributiona
         dv=dv,
         representation_type="Athens",
         representation_size=size,
-        correlation_tracking=mode,
+        dependency_tracking=mode,
     )
 
 
@@ -320,7 +320,7 @@ class GateExpressionTest(unittest.TestCase):
         self.ground_truth = normal_ground_truth()
 
     def test_zero_spread_ground_truth_is_not_measured(self) -> None:
-        values = [tagged(normal_comb(8), 8, Correlations.DISABLED)]
+        values = [tagged(normal_comb(8), 8, DependencyTracking.NONE)]
         decisions = gate.gate_expression(
             "x",
             DistributionalValue.from_samples([1.0] * 5),
@@ -343,7 +343,7 @@ class GateExpressionTest(unittest.TestCase):
                 DiracDelta(position=float("inf"), mass=0.1),
             ]
         )
-        values = [tagged(normal_comb(8), 8, Correlations.DISABLED)]
+        values = [tagged(normal_comb(8), 8, DependencyTracking.NONE)]
         decisions = gate.gate_expression(
             "x", ground_truth, values, values, self.parameters
         )
@@ -353,14 +353,14 @@ class GateExpressionTest(unittest.TestCase):
     def test_modes_are_decided_separately(self) -> None:
         sizes = [16, 32, 64, 128, 256]
         baseline = [
-            tagged(normal_comb(size), size, Correlations.DISABLED) for size in sizes
+            tagged(normal_comb(size), size, DependencyTracking.NONE) for size in sizes
         ]
         under_test = [
-            tagged(normal_comb(size, shift=2.0), size, Correlations.AUTOCORRELATION)
+            tagged(normal_comb(size, shift=2.0), size, DependencyTracking.BASIC)
             for size in sizes
         ]
         decisions = {
-            decision.correlation_tracking: decision
+            decision.dependency_tracking: decision
             for decision in gate.gate_expression(
                 "x",
                 self.ground_truth,
@@ -370,24 +370,24 @@ class GateExpressionTest(unittest.TestCase):
             )
         }
         self.assertEqual(
-            set(decisions), {Correlations.DISABLED, Correlations.AUTOCORRELATION}
+            set(decisions), {DependencyTracking.NONE, DependencyTracking.BASIC}
         )
-        disabled = decisions[Correlations.DISABLED]
-        self.assertEqual(disabled.decision, gate.MEASURED_ONE_SIDE)
-        self.assertIsNone(disabled.under_test)
-        self.assertEqual(present(disabled.baseline).size, 256)
-        self.assertEqual(disabled.size_label, "256")
-        autocorrelation = decisions[Correlations.AUTOCORRELATION]
-        self.assertEqual(autocorrelation.decision, gate.NOT_MEASURED)
-        self.assertIsNone(autocorrelation.baseline)
-        self.assertFalse(present(autocorrelation.under_test).passed)
-        self.assertEqual(present(autocorrelation.under_test).size, 256)
+        no_tracking = decisions[DependencyTracking.NONE]
+        self.assertEqual(no_tracking.decision, gate.MEASURED_ONE_SIDE)
+        self.assertIsNone(no_tracking.under_test)
+        self.assertEqual(present(no_tracking.baseline).size, 256)
+        self.assertEqual(no_tracking.size_label, "256")
+        basic = decisions[DependencyTracking.BASIC]
+        self.assertEqual(basic.decision, gate.NOT_MEASURED)
+        self.assertIsNone(basic.baseline)
+        self.assertFalse(present(basic.under_test).passed)
+        self.assertEqual(present(basic.under_test).size, 256)
 
     def test_only_the_largest_size_is_tested(self) -> None:
         """Off by two std at 16, exact at 32: only size 32 counts."""
         values = [
-            tagged(normal_comb(16, shift=2.0), 16, Correlations.DISABLED),
-            tagged(normal_comb(32), 32, Correlations.DISABLED),
+            tagged(normal_comb(16, shift=2.0), 16, DependencyTracking.NONE),
+            tagged(normal_comb(32), 32, DependencyTracking.NONE),
         ]
         decision = gate.gate_expression(
             "x", self.ground_truth, values, values, self.parameters
@@ -406,16 +406,16 @@ class GateExpressionTest(unittest.TestCase):
         sizes = [16, 32, 64, 128, 256]
         values = []
         for size in sizes:
-            values.append(tagged(normal_comb(size), size, Correlations.DISABLED))
+            values.append(tagged(normal_comb(size), size, DependencyTracking.NONE))
             values.append(
-                tagged(normal_comb(size, shift=2.0), size, Correlations.DISABLED)
+                tagged(normal_comb(size, shift=2.0), size, DependencyTracking.NONE)
             )
         decisions = gate.gate_expression(
             "x", self.ground_truth, values, values, self.parameters
         )
         self.assertEqual(
-            [(d.correlation_tracking, d.occurrence) for d in decisions],
-            [(Correlations.DISABLED, 0), (Correlations.DISABLED, 1)],
+            [(d.dependency_tracking, d.occurrence) for d in decisions],
+            [(DependencyTracking.NONE, 0), (DependencyTracking.NONE, 1)],
         )
         self.assertEqual(decisions[0].decision, gate.MEASURED)
         self.assertTrue(present(decisions[0].baseline).passed)
@@ -427,8 +427,8 @@ class GateExpressionTest(unittest.TestCase):
     def test_unsampleable_representation_fails(self) -> None:
         empty = DistributionalValue(dirac_deltas=[])
         values = [
-            tagged(normal_comb(16), 16, Correlations.DISABLED),
-            tagged(empty, 32, Correlations.DISABLED),
+            tagged(normal_comb(16), 16, DependencyTracking.NONE),
+            tagged(empty, 32, DependencyTracking.NONE),
         ]
         decision = gate.gate_expression(
             "x", self.ground_truth, values, [], self.parameters
@@ -438,7 +438,7 @@ class GateExpressionTest(unittest.TestCase):
         self.assertTrue(np.isnan(present(decision.baseline).p_value))
 
 
-AC = "Athens-32-Autocorrelation"
+AC = "Athens-32-Basic"
 REPORT = "\n".join(
     [
         "| Benchmark | Expression | Baseline Conf | Under-test Conf | WD Diff |",
@@ -452,10 +452,10 @@ REPORT = "\n".join(
 
 class FilterReportTest(unittest.TestCase):
     def test_drops_only_excluded_rows(self) -> None:
-        excluded = {("out[0]", Correlations.AUTOCORRELATION, 0)}
+        excluded = {("out[0]", DependencyTracking.BASIC, 0)}
         text, dropped = gate.filter_report(REPORT, excluded, "empty")
         self.assertEqual(dropped, 1)
-        self.assertNotIn("Autocorrelation", text)
+        self.assertNotIn("Basic", text)
         self.assertIn("| out[1]", text)
         self.assertEqual(text.count("\n"), 4)
 
@@ -466,9 +466,9 @@ class FilterReportTest(unittest.TestCase):
 
     def test_empty_table_becomes_note(self) -> None:
         excluded = {
-            ("out[0]", Correlations.DISABLED, 0),
-            ("out[0]", Correlations.AUTOCORRELATION, 0),
-            ("out[1]", Correlations.DISABLED, 0),
+            ("out[0]", DependencyTracking.NONE, 0),
+            ("out[0]", DependencyTracking.BASIC, 0),
+            ("out[1]", DependencyTracking.NONE, 0),
         }
         text, dropped = gate.filter_report(REPORT, excluded, "empty")
         self.assertEqual(dropped, 3)
@@ -493,7 +493,7 @@ class FilterReportTest(unittest.TestCase):
                 "| demo | out[1] | Athens-32 | Athens-32 | 0.3 |",
             ]
         )
-        excluded = {("out[0]", Correlations.DISABLED, 1)}
+        excluded = {("out[0]", DependencyTracking.NONE, 1)}
         text, dropped = gate.filter_report(report, excluded, "empty")
         self.assertEqual(dropped, 1)
         self.assertIn("| 0.1 |", text)
@@ -501,15 +501,15 @@ class FilterReportTest(unittest.TestCase):
         self.assertIn("| 0.3 |", text)
 
 
-class ConfigurationCorrelationTest(unittest.TestCase):
-    def test_suffix_selects_autocorrelation(self) -> None:
+class ConfigurationDependencyTrackingTest(unittest.TestCase):
+    def test_suffix_selects_the_dependency_tracking(self) -> None:
         self.assertEqual(
-            gate.configuration_correlation("Athens-32-Autocorrelation"),
-            Correlations.AUTOCORRELATION,
+            gate.configuration_dependency_tracking("Athens-32-Basic"),
+            DependencyTracking.BASIC,
         )
         self.assertEqual(
-            gate.configuration_correlation("Jupiter-16"),
-            Correlations.DISABLED,
+            gate.configuration_dependency_tracking("Jupiter-16"),
+            DependencyTracking.NONE,
         )
 
 
@@ -518,14 +518,14 @@ class GateTableTest(unittest.TestCase):
         decisions = [
             gate.GateDecision(
                 "a",
-                Correlations.DISABLED,
+                DependencyTracking.NONE,
                 side(True),
                 side(False, size=256),
                 *gate.decide(side(True), side(False, size=256)),
             ),
             gate.GateDecision(
                 "b",
-                Correlations.DISABLED,
+                DependencyTracking.NONE,
                 None,
                 None,
                 gate.NOT_MEASURED,
@@ -601,7 +601,7 @@ class MainTest(unittest.TestCase):
                 SyntheticUxhwExpression("good", "value-0", 100.0, 15.0),
                 SyntheticUxhwExpression("bad", "value-1", 250.0, 15.0),
             ],
-            [SyntheticUxhwConfig("Athens", 64, Correlations.DISABLED)],
+            [SyntheticUxhwConfig("Athens", 64, DependencyTracking.NONE)],
         )
 
         yaml_path = os.path.join(directory, "signaloid.yaml")

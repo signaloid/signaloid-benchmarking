@@ -24,10 +24,13 @@ import os
 import re
 import datetime
 import functools
+from collections.abc import Callable
 from signaloid_benchmarking.types import (
     BenchmarkingVariable,
 )
 from signaloid_benchmarking.automation.benchmarking_utils import (
+    check_signaloid_yaml,
+    check_trace_variable_lines,
     get_git_remote,
     expand_array_expressions,
 )
@@ -36,6 +39,7 @@ from signaloid_benchmarking.automation.build import (
     configuration_skip_reason,
     export_timing_env,
     run_timing_script,
+    sdk_representation_type,
 )
 from signaloid_benchmarking.automation.scce import (
     ScceRunner,
@@ -45,13 +49,13 @@ from signaloid_benchmarking.automation.analysis import (
     load_emcc_data,
 )
 from signaloid_benchmarking.automation.arguments import (
-    CORRELATION_CHOICES,
+    DEPENDENCY_TRACKING_CHOICES,
     REPRESENTATION_TYPE_CHOICES,
     validate_sweep_values,
 )
 from signaloid_benchmarking.config import (
     RepresentationTypes,
-    Correlations,
+    DependencyTracking,
     DistanceMetrics,
     ReportingMethods,
     SignaloidYaml,
@@ -76,7 +80,7 @@ class Benchmark:
 
     Holds the resolved configuration for a single application benchmark (paths
     to the application, the UxHw SDK and PIN, the representation types/sizes and
-    correlation modes under test, ground-truth and adversary sample sizes, the
+    dependency tracking modes under test, ground-truth and adversary sample sizes, the
     distance metric, and reporting options) and threads it through the
     multi-stage pipeline. The per-stage work (compilation, database generation,
     sample generation, measurement loading, EMCC and UxHw-distance analysis, and
@@ -101,9 +105,9 @@ class Benchmark:
         ],
         representation_sizes: list[int] = [16, 32, 64, 128, 256, 512],
         max_jupiter_size: int = DEFAULT_MAX_JUPITER_SIZE,
-        correlations: list[str] = [
-            Correlations.DISABLED,
-            Correlations.AUTOCORRELATION,
+        dependency_tracking_modes: list[str] = [
+            DependencyTracking.NONE,
+            DependencyTracking.BASIC,
         ],
         ground_truth_type: str = RepresentationTypes.MONTE_CARLO,
         max_num_weighted_samples: int = DEFAULT_MAX_NUM_WEIGHTED_SAMPLES,
@@ -142,7 +146,9 @@ class Benchmark:
         self.all_outputs_cla: str = ""
         self.representation_types = representation_types
         self.representation_sizes = representation_sizes
-        self.correlations = correlations
+        self.dependency_tracking_modes = dependency_tracking_modes
+        # How the SDK names Rome. See resolve_sdk_rome_name.
+        self.sdk_rome_name = RepresentationTypes.ROME
         self.cwd = os.path.abspath(os.getcwd())
         self.results_dir = os.path.join(self.cwd, "results")
         self.logs_dir = os.path.join(self.cwd, "logs")
@@ -174,7 +180,7 @@ class Benchmark:
         self.scce_runner: ScceRunner | None = None
         if self.run_uxhw_scce and self.measure_dynamic_instructions:
             print(
-                "Warning! Intel PIN cannot instrument the UxHw runs on SCCE, so "
+                "Warning: Intel PIN cannot instrument the UxHw runs on SCCE, so "
                 "--measure-dynamic-instructions counts the native Monte Carlo "
                 "binary only. The UxHw rows' Database Dyn. Inst. Count is the "
                 "DynamicInstructions that SCCE reports, and their PIN count is "
@@ -222,7 +228,9 @@ class Benchmark:
 
         if num_parallel_workers > self.n_processors:
             print(
-                f"Warning! Requested {num_parallel_workers} parallel workers but only {self.n_processors} detected!"
+                f"Warning: {num_parallel_workers} parallel workers were asked "
+                f"for, but this machine has {self.n_processors} CPUs. Using "
+                f"{self.n_processors}."
             )
             num_parallel_workers = self.n_processors
 
@@ -240,18 +248,14 @@ class Benchmark:
         with open(signaloid_yaml_path, "r") as yaml_file:
             yaml_list = yaml.safe_load(yaml_file)
 
-            # Get trace variable info for file path and line number
+            # Both checks run before anything is built, so a wrong
+            # signaloid.yaml costs no build or measurement time.
+            check_signaloid_yaml(signaloid_yaml_path, yaml_list)
             trace_variables = yaml_list[SignaloidYaml.TRACE_VARIABLES]
+            check_trace_variable_lines(self.path_to_application, trace_variables)
             trace_variables = expand_array_expressions(trace_variables)
 
             if SignaloidYaml.BENCHMARKING_VARIABLES in yaml_list:
-                if SignaloidYaml.ALL_OUTPUTS not in yaml_list:
-                    raise ValueError(
-                        f"signaloid.yaml at '{signaloid_yaml_path}' defines "
-                        f"'{SignaloidYaml.BENCHMARKING_VARIABLES}' but is missing "
-                        f"'{SignaloidYaml.ALL_OUTPUTS}'. An all-outputs invocation "
-                        "is required to run combined-output measurements."
-                    )
                 all_outputs = yaml_list[SignaloidYaml.ALL_OUTPUTS]
                 self.all_outputs_cla = all_outputs[0][
                     SignaloidYaml.COMMAND_LINE_ARGUMENTS
@@ -274,7 +278,8 @@ class Benchmark:
                     )
                     if trace_variable is None:
                         raise ValueError(
-                            f"Benchmarking variable '{variable_name}' has no matching traced variable!"
+                            f"Benchmarking variable '{variable_name}' matches no "
+                            f"{SignaloidYaml.TRACE_VARIABLES} expression."
                         )
                     file_name = trace_variable[SignaloidYaml.FILE]
                     line_number = trace_variable[SignaloidYaml.LINE_NUMBER]
@@ -286,9 +291,32 @@ class Benchmark:
                     variable_type = var_config[SignaloidYaml.OUTPUT_OBJECT]
                     command_line_args = var_config[SignaloidYaml.COMMAND_LINE_ARGUMENTS]
 
-                    # Create BenchmarkingVariable object. The last four
-                    # keys are optional, and an absent one stays None so
-                    # the run-wide flag applies to this variable.
+                    # The optional keys stay None when absent, so the
+                    # run-wide flag applies to this variable. The types are
+                    # read first, since an earlier dependency tracking name
+                    # means a different mode for an Advanced type.
+                    representation_types = self._read_sweep_override(
+                        var_config,
+                        SignaloidYaml.REPRESENTATION_TYPES,
+                        allowed=REPRESENTATION_TYPE_CHOICES,
+                        translate=lambda values: [
+                            RepresentationTypes.from_earlier_name(value)
+                            for value in values
+                        ],
+                    )
+                    dependency_tracking_modes = self._read_sweep_override(
+                        var_config,
+                        (
+                            SignaloidYaml.EARLIER_DEPENDENCY_TRACKING
+                            if SignaloidYaml.EARLIER_DEPENDENCY_TRACKING in var_config
+                            and SignaloidYaml.DEPENDENCY_TRACKING not in var_config
+                            else SignaloidYaml.DEPENDENCY_TRACKING
+                        ),
+                        allowed=DEPENDENCY_TRACKING_CHOICES,
+                        translate=lambda values: DependencyTracking.from_earlier_names(
+                            values, representation_types or self.representation_types
+                        ),
+                    )
                     variable = BenchmarkingVariable(
                         value_id=self.value_id,
                         name=variable_name,
@@ -299,21 +327,13 @@ class Benchmark:
                         file_name=file_name,
                         type=variable_type,
                         cla=command_line_args,
-                        representation_types=self._read_sweep_override(
-                            var_config,
-                            SignaloidYaml.REPRESENTATION_TYPES,
-                            allowed=REPRESENTATION_TYPE_CHOICES,
-                        ),
+                        representation_types=representation_types,
                         representation_sizes=self._read_sweep_override(
                             var_config,
                             SignaloidYaml.REPRESENTATION_SIZES,
                             integers_only=True,
                         ),
-                        correlations=self._read_sweep_override(
-                            var_config,
-                            SignaloidYaml.CORRELATION_TRACKING,
-                            allowed=CORRELATION_CHOICES,
-                        ),
+                        dependency_tracking_modes=dependency_tracking_modes,
                         analytic_ground_truth=self._read_analytic_ground_truth(
                             var_config
                         ),
@@ -366,6 +386,28 @@ class Benchmark:
                     )
                     self.benchmarking_variables.append(variable)
 
+    def resolve_sdk_rome_name(self) -> None:
+        """
+        Find how the SDK names Rome, and hand that name to the timing layer.
+
+        An SDK from before the rename builds Rome as Atlas and writes Atlas
+        to its database. The run and its results still say Rome. Only the
+        SDK builds use the earlier name, and the database readers translate
+        it back. On SCCE there is no SDK to ask.
+        """
+        asked_types = self.representation_types + [
+            representation_type
+            for variable in self.benchmarking_variables
+            for representation_type in variable.representation_types or []
+        ]
+        if not self.run_uxhw_scce and RepresentationTypes.ROME in asked_types:
+            self.sdk_rome_name = sdk_representation_type(
+                representation_type=RepresentationTypes.ROME,
+                path_to_application=self.path_to_application,
+                path_to_uxhw_sdk=self.path_to_uxhw_sdk,
+            )
+        os.environ["SDK_ROME_REPRESENTATION_TYPE"] = self.sdk_rome_name
+
     def resolve_skipped_configurations(self) -> None:
         """
         Decide which configurations of each variable's matrix cannot run.
@@ -386,22 +428,26 @@ class Benchmark:
         skipped_variables: dict[str, list[str]] = {}
         skip_reasons: dict[str, str] = {}
         for variable in self.benchmarking_variables:
-            types, sizes, correlations = variable.representation_matrix(
+            types, sizes, dependency_tracking_modes = variable.representation_matrix(
                 representation_types=self.representation_types,
                 representation_sizes=self.representation_sizes,
-                correlations=self.correlations,
+                dependency_tracking_modes=self.dependency_tracking_modes,
             )
             variable.skipped_configurations = {}
             runnable = 0
             for representation_type in types:
                 for representation_size in sizes:
-                    for correlation in correlations:
-                        key = (representation_type, representation_size, correlation)
+                    for dependency_tracking in dependency_tracking_modes:
+                        key = (
+                            representation_type,
+                            representation_size,
+                            dependency_tracking,
+                        )
                         if key not in reasons:
                             reasons[key] = self._configuration_skip_reason(
                                 representation_type=representation_type,
                                 representation_size=representation_size,
-                                correlation=correlation,
+                                dependency_tracking=dependency_tracking,
                             )
                         reason = reasons[key]
                         if reason is None:
@@ -411,7 +457,7 @@ class Benchmark:
                         configuration = configuration_string(
                             representation_type=representation_type,
                             representation_size=representation_size,
-                            correlation=correlation,
+                            dependency_tracking=dependency_tracking,
                         )
                         variable.skipped_configurations[configuration] = reason
                         skip_reasons[configuration] = reason
@@ -421,7 +467,7 @@ class Benchmark:
 
             if runnable == 0:
                 raise ValueError(
-                    f"Error! Benchmarking variable '{variable.name}' has no "
+                    f"Benchmarking variable '{variable.name}' has no "
                     "configuration that can run. "
                     + " ".join(
                         f"{configuration} is skipped because {reason}."
@@ -442,7 +488,7 @@ class Benchmark:
         *,
         representation_type: str,
         representation_size: int,
-        correlation: str,
+        dependency_tracking: str,
     ) -> str | None:
         """
         Say why a configuration cannot run, if it cannot.
@@ -453,11 +499,17 @@ class Benchmark:
         Args:
             representation_type: For example ``Europa``.
             representation_size: For example ``8``.
-            correlation: ``Disabled`` or ``Autocorrelation``.
+            dependency_tracking: ``None``, ``Basic``, or ``Advanced``.
 
         Returns:
             The reason, or ``None`` when the configuration can run.
         """
+        reason = DependencyTracking.skip_reason(
+            representation_type, dependency_tracking
+        )
+        if reason is not None:
+            return reason
+
         if self.run_uxhw_scce:
             return scce_configuration_skip_reason(
                 representation_type=representation_type,
@@ -469,8 +521,13 @@ class Benchmark:
             path_to_application=self.path_to_application,
             path_to_uxhw_sdk=self.path_to_uxhw_sdk,
             representation_type=representation_type,
+            sdk_representation_type=(
+                self.sdk_rome_name
+                if representation_type == RepresentationTypes.ROME
+                else representation_type
+            ),
             representation_size=representation_size,
-            correlation=correlation,
+            dependency_tracking=dependency_tracking,
             max_jupiter_size=self.max_jupiter_size,
         )
 
@@ -489,7 +546,7 @@ class Benchmark:
             variable.benchmarked_configurations(
                 representation_types=self.representation_types,
                 representation_sizes=self.representation_sizes,
-                correlations=self.correlations,
+                dependency_tracking_modes=self.dependency_tracking_modes,
             )
         )
 
@@ -512,7 +569,7 @@ class Benchmark:
             return
 
         raise RuntimeError(
-            "Error! No benchmarking variable has a UxHw configuration left. "
+            "No benchmarking variable has a UxHw configuration left. "
             + " ".join(
                 f"{configuration} of {variable.name} is skipped because {reason}."
                 for variable in self.benchmarking_variables
@@ -527,6 +584,7 @@ class Benchmark:
         *,
         allowed: list[str] | None = None,
         integers_only: bool = False,
+        translate: Callable[[list[str]], list[str]] | None = None,
     ) -> list | None:
         """
         Read one optional sweep axis from a BenchmarkingVariables entry.
@@ -540,6 +598,8 @@ class Benchmark:
             key: The signaloid.yaml key of the axis.
             allowed: The permitted values, or ``None`` for any value.
             integers_only: Whether every value must be an integer.
+            translate: Translates earlier value names, such as ``Atlas``,
+                to the current ones before the check.
 
         Returns:
             The declared values, or ``None`` when the entry does not
@@ -554,6 +614,12 @@ class Benchmark:
             return None
 
         values = var_config[key]
+        if (
+            translate is not None
+            and isinstance(values, list)
+            and all(isinstance(value, str) for value in values)
+        ):
+            values = list(dict.fromkeys(translate(values)))
         validate_sweep_values(
             label=(
                 f"'{key}' of benchmarking variable "
@@ -594,8 +660,8 @@ class Benchmark:
         script = var_config[key]
         if not isinstance(script, str) or not script.strip():
             raise ValueError(
-                f"Error! '{key}' of benchmarking variable '{variable_name}' "
-                f"must name a script, got {script!r}."
+                f"'{key}' of benchmarking variable '{variable_name}' must "
+                f"name a script. It is {script!r}."
             )
 
         script_path = os.path.abspath(
@@ -603,8 +669,8 @@ class Benchmark:
         )
         if not os.path.isfile(script_path):
             raise ValueError(
-                f"Error! '{key}' of benchmarking variable '{variable_name}' "
-                f"names {script!r}, but {script_path} is not a file."
+                f"'{key}' of benchmarking variable '{variable_name}' names "
+                f"{script!r}, but {script_path} is not a file."
             )
 
         return script_path
@@ -641,13 +707,13 @@ class Benchmark:
                 ).strip()
             except subprocess.CalledProcessError:
                 print(
-                    "Error retrieving git hash. "
-                    "Falling back to date-based versioning."
+                    "Warning: Could not read the git hash of "
+                    f"{path_to_application}. Using the date as the version."
                 )
         else:
             print(
-                "Warning! Application path is not a git repository. "
-                "Falling back to date-based versioning."
+                f"Warning: {path_to_application} is not a git repository. "
+                "Using the date as the version."
             )
         return datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
 
@@ -683,6 +749,7 @@ class Benchmark:
 
         # Load the signaloid.yaml file
         self.load_yaml()
+        self.resolve_sdk_rome_name()
         self.resolve_skipped_configurations()
 
         # Attempt native compilation
@@ -799,7 +866,7 @@ class Benchmark:
             demo_cli_args=self.demo_cli_args,
             representation_types=self.representation_types,
             representation_sizes=self.representation_sizes,
-            correlations=self.correlations,
+            dependency_tracking_modes=self.dependency_tracking_modes,
             logs_dir=self.logs_dir,
             intermediate_timings_path=self.intermediate_timings_path(),
         )

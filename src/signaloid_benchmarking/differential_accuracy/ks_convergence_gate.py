@@ -38,7 +38,7 @@ from scipy.stats import chi2, kstwo  # type: ignore
 from tabulate import tabulate
 
 from signaloid_benchmarking.config import (
-    Correlations,
+    DependencyTracking,
     RepresentationTypes,
     VariableTypes,
 )
@@ -109,10 +109,10 @@ class SideResult:
 
 @dataclass
 class GateDecision:
-    """Verdict for one expression, correlation mode and occurrence."""
+    """Verdict for one expression, dependency tracking mode and occurrence."""
 
     expression: str
-    correlation_tracking: str
+    dependency_tracking: str
     baseline: SideResult | None
     under_test: SideResult | None
     decision: str
@@ -361,7 +361,7 @@ def numbered_values(
         values: UxHw distributions of one expression from one database.
 
     Returns:
-        (value, correlation mode, occurrence) triples.
+        (value, dependency tracking mode, occurrence) triples.
     """
     occurrences: dict[str, int] = {}
     numbered = []
@@ -369,7 +369,7 @@ def numbered_values(
         configuration = repr(value)
         occurrence = occurrences.get(configuration, 0)
         occurrences[configuration] = occurrence + 1
-        mode = value.correlation_tracking or Correlations.DISABLED
+        mode = value.dependency_tracking or DependencyTracking.NONE
         numbered.append((value, mode, occurrence))
     return numbered
 
@@ -391,7 +391,7 @@ def test_side(
         parameters: Significance level, bootstrap count and seed.
 
     Returns:
-        Verdicts keyed by correlation-tracking mode and occurrence.
+        Verdicts keyed by dependency tracking mode and occurrence.
     """
     largest: dict[tuple[str, int], TaggedDistributionalValue] = {}
     for value, mode, occurrence in numbered_values(values):
@@ -424,7 +424,7 @@ def gate_expression(
     parameters: TestParameters,
 ) -> list[GateDecision]:
     """
-    Decide every correlation-tracking mode of one expression.
+    Decide every dependency tracking mode of one expression.
 
     Args:
         expression: Benchmarking variable name.
@@ -475,12 +475,12 @@ def gate_expression(
     return decisions
 
 
-def configuration_correlation(configuration: str) -> str:
+def configuration_dependency_tracking(configuration: str) -> str:
     """
-    Correlation-tracking mode encoded in a report configuration string.
+    Dependency tracking mode encoded in a report configuration string.
 
-    The comparison tool writes Athens-32 for disabled tracking and
-    Athens-32-Autocorrelation otherwise.
+    The comparison tool writes Athens-32 for no tracking, Athens-32-Basic,
+    and Jupiter-32-Advanced.
 
     Args:
         configuration: Value of a Conf column.
@@ -488,9 +488,10 @@ def configuration_correlation(configuration: str) -> str:
     Returns:
         The mode keyword.
     """
-    if configuration.endswith("-" + Correlations.AUTOCORRELATION):
-        return Correlations.AUTOCORRELATION
-    return Correlations.DISABLED
+    for mode in (DependencyTracking.BASIC, DependencyTracking.ADVANCED):
+        if configuration.endswith("-" + mode):
+            return mode
+    return DependencyTracking.NONE
 
 
 def _split_row(line: str) -> list[str]:
@@ -510,7 +511,7 @@ def filter_report(
     """
     Drop the rows of a comparison report whose configuration is excluded.
 
-    Rows are matched on the Expression column, the correlation mode of the
+    Rows are matched on the Expression column, the dependency tracking mode of the
     Under-test Conf column, and the occurrence, which is the row's rank
     among the rows of its table with the same expression and configuration
     string, see numbered_values. A table left without rows is replaced by
@@ -518,7 +519,7 @@ def filter_report(
 
     Args:
         text: Markdown written by distance_uxhw_vs_mc.
-        excluded: (expression, correlation mode, occurrence) triples.
+        excluded: (expression, dependency tracking mode, occurrence) triples.
         note: Replacement for a table left empty.
 
     Returns:
@@ -569,7 +570,7 @@ def filter_report(
         seen[(cells[expression_index], configuration)] = occurrence + 1
         key = (
             cells[expression_index],
-            configuration_correlation(configuration),
+            configuration_dependency_tracking(configuration),
             occurrence,
         )
         if key in excluded:
@@ -602,8 +603,8 @@ def gate_table(
             "Benchmark": benchmark,
             "Expression": decision.expression,
             "Configuration": (
-                f"{representation}-{decision.correlation_tracking}"
-                if decision.correlation_tracking
+                f"{representation}-{decision.dependency_tracking}"
+                if decision.dependency_tracking
                 else representation
             ),
             "Occurrence": str(decision.occurrence),
@@ -664,8 +665,8 @@ def load_largest_size(
         if values:
             return values
     raise ValueError(
-        f"{db_path}: no rows for {expression} at any of the sizes "
-        f"{sorted(set(sizes))}"
+        f"{db_path} has no rows for {expression} at any of the sizes "
+        f"{sorted(set(sizes))}."
     ) from error
 
 
@@ -819,7 +820,7 @@ def main(argv: list[str] | None = None) -> int:
             parameters,
         ):
             label = f"{expression} {representation}-"
-            label += decision.correlation_tracking
+            label += decision.dependency_tracking
             if decision.occurrence:
                 label += f" #{decision.occurrence}"
             for name, side in (
@@ -841,7 +842,7 @@ def main(argv: list[str] | None = None) -> int:
         excluded = {
             (
                 decision.expression,
-                decision.correlation_tracking,
+                decision.dependency_tracking,
                 decision.occurrence,
             )
             for decision in decisions

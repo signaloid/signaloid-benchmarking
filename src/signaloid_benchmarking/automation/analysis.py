@@ -204,7 +204,7 @@ def compute_uxhw_distances(
     tracing_db_path: str,
     representation_types: list[str],
     representation_sizes: list[int],
-    correlations: list[str],
+    dependency_tracking_modes: list[str],
     uxhw_distance_file: str,
 ) -> None:
     """
@@ -227,7 +227,7 @@ def compute_uxhw_distances(
         representation_types: Run-wide UxHw UR-type strings, evaluated
             for a variable that declares none of its own.
         representation_sizes: Run-wide UxHw UR-size integers, likewise.
-        correlations: Run-wide correlation modes, likewise. Used only to
+        dependency_tracking_modes: Run-wide dependency tracking modes, likewise. Used only to
             tell whether a variable has a configuration left.
         uxhw_distance_file: CSV file to write the resulting distance
             records to.
@@ -245,8 +245,9 @@ def compute_uxhw_distances(
         uxhw_distance_fn = binned_wasserstein_1_uxhw_wrapper
     else:
         raise RuntimeError(
-            f"Invalid distance type configuration "
-            f"{distance_type}. Check py for valid options"
+            f"Distance type {distance_type!r} is not known. Use "
+            f"{DistanceMetrics.WASSERSTEIN_1!r}, {DistanceMetrics.WASSERSTEIN_2!r} "
+            f"or {DistanceMetrics.BINNED_WASSERSTEIN_1!r}."
         )
 
     for variable in benchmarking_variables:
@@ -255,7 +256,7 @@ def compute_uxhw_distances(
         if not variable.benchmarked_configurations(
             representation_types=representation_types,
             representation_sizes=representation_sizes,
-            correlations=correlations,
+            dependency_tracking_modes=dependency_tracking_modes,
         ):
             continue
 
@@ -271,11 +272,11 @@ def compute_uxhw_distances(
         # Get all distributions from databases
         variable.emcc_results.emcc_data = []
         # Only types and sizes narrow the load. The tracing database holds
-        # just the correlation modes this variable was traced with.
+        # just the dependency tracking modes this variable was traced with.
         variable_types, variable_sizes, _ = variable.representation_matrix(
             representation_types=representation_types,
             representation_sizes=representation_sizes,
-            correlations=[],
+            dependency_tracking_modes=[],
         )
         uxhw_data: list[TaggedDistributionalValue] = _load_uxhw_distributions(
             db_path=tracing_db_path,
@@ -705,7 +706,7 @@ def compute_equivalent_mc(
     tracing_db_path: str,
     representation_types: list[str],
     representation_sizes: list[int],
-    correlations: list[str],
+    dependency_tracking_modes: list[str],
     num_parallel_workers: int,
     n_adversaries: int,
     distance_type: str,
@@ -751,7 +752,7 @@ def compute_equivalent_mc(
         if variable.benchmarked_configurations(
             representation_types=representation_types,
             representation_sizes=representation_sizes,
-            correlations=correlations,
+            dependency_tracking_modes=dependency_tracking_modes,
         )
     ]
     load_data_and_compute_equivalent_mc(
@@ -765,7 +766,7 @@ def compute_equivalent_mc(
             "uxhw_database_path": tracing_db_path,
             "uxhw_ur_types": representation_types,
             "uxhw_ur_sizes": representation_sizes,
-            "correlations": correlations,
+            "dependency_tracking_modes": dependency_tracking_modes,
             "n_processes": num_parallel_workers,
             "n_adversaries": n_adversaries,
             "plot_comparison_distributions": plot_comparison_distributions,

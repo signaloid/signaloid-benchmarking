@@ -54,7 +54,7 @@ def load_measurement_dicts(
     demo_cli_args: str,
     representation_sizes: list[int],
     representation_types: list[str],
-    correlations: list[str],
+    dependency_tracking_modes: list[str],
 ) -> str:
     """
     Load measurement information from the transient intermediate file,
@@ -79,7 +79,7 @@ def load_measurement_dicts(
         demo_cli_args: Demo-level command-line arguments string.
         representation_sizes: Configured representation sizes.
         representation_types: Configured representation types.
-        correlations: Configured correlation modes.
+        dependency_tracking_modes: Configured dependency tracking modes.
 
     Returns:
         The ``uxhw_version`` lifted from the canonical document so the
@@ -94,8 +94,8 @@ def load_measurement_dicts(
     """
     print(f"Loading measurements from {intermediate_path}")
 
+    stderr_log = os.path.join(logs_dir, "timing_script_stderr.log")
     if not os.path.isfile(intermediate_path):
-        stderr_log = os.path.join(logs_dir, "timing_script_stderr.log")
         raise RuntimeError(
             f"Timing intermediate not found at {intermediate_path}. "
             f"The bash timing script likely failed before writing it. "
@@ -110,7 +110,10 @@ def load_measurement_dicts(
     num = len(benchmarking_variables) * 2
     if len(runs) < num:
         raise RuntimeError(
-            f"Error! {len(runs)} runs of UxHw timing data found, " f"expected {num}."
+            f"{intermediate_path} has {len(runs)} timing runs, but {num} were "
+            f"expected. Each of the {len(benchmarking_variables)} variables "
+            "needs a UxHw run and a native Monte Carlo run. The timing script "
+            f"may have stopped early. See {stderr_log}."
         )
     runs = runs[-num:]
 
@@ -124,7 +127,7 @@ def load_measurement_dicts(
         # on SCCE does not, is not disagreeing with the ones that did.
         distinct = {value for value in values if value != ""}
         if len(distinct) > 1:
-            print(f"Warning! {key} differs across runs: {sorted(distinct)}")
+            print(f"Warning: {key} differs across runs. It is {sorted(distinct)}.")
         session[key] = next((v for v in values if v != ""), "")
     for run in runs:
         for key in TimingFormat.SESSION_META_KEYS:
@@ -145,7 +148,7 @@ def load_measurement_dicts(
         demo_cli_args=demo_cli_args,
         representation_sizes=representation_sizes,
         representation_types=representation_types,
-        correlations=correlations,
+        dependency_tracking_modes=dependency_tracking_modes,
     )
 
     # The JSON is now the canonical artifact, so remove the intermediate. Only
@@ -165,7 +168,7 @@ def load_measurement_data(
     demo_cli_args: str,
     representation_sizes: list[int],
     representation_types: list[str],
-    correlations: list[str],
+    dependency_tracking_modes: list[str],
 ) -> None:
     """
     Populate BenchmarkingVariable objects with measurement data from
@@ -187,7 +190,7 @@ def load_measurement_data(
             in the final invariant check and only for a variable that
             declares none of its own.
         representation_types: Run-wide representation types, likewise.
-        correlations: Run-wide correlation modes, likewise.
+        dependency_tracking_modes: Run-wide dependency tracking modes, likewise.
 
     Raises:
         RuntimeError: If the parsed native-MC count disagrees with the
@@ -281,7 +284,7 @@ def load_measurement_data(
         expected = variable.benchmarked_configurations(
             representation_types=representation_types,
             representation_sizes=representation_sizes,
-            correlations=correlations,
+            dependency_tracking_modes=dependency_tracking_modes,
         )
         num_uxhw_configs += len(expected)
         measured = measured_configurations.get(variable.name, [])
@@ -297,8 +300,9 @@ def load_measurement_data(
                 mismatches.append(f"{variable.name} {label} {', '.join(configs)}.")
     if mismatches:
         raise RuntimeError(
-            f"Error! Measurement data was obtained for {uxhw_counter} "
-            f"UxHw configurations, expected {num_uxhw_configs}. " + " ".join(mismatches)
+            f"Measurement data was found for {uxhw_counter} UxHw "
+            f"configurations, but {num_uxhw_configs} were expected. "
+            + " ".join(mismatches)
         )
     num_native_mc_configs: int = int(
         np.sum(
@@ -317,8 +321,9 @@ def load_measurement_data(
         )
     if native_mc_counter != num_native_mc_configs:
         raise RuntimeError(
-            f"Error! Measurement data was obtained {native_mc_counter} "
-            f"native MC configurations, expected {num_native_mc_configs}"
+            f"Measurement data was found for {native_mc_counter} native "
+            f"Monte Carlo configurations, but {num_native_mc_configs} were "
+            "expected."
         )
 
 
@@ -426,10 +431,10 @@ def _records_by_description(path: str, contents: str) -> dict[str, list[Any]]:
     """
     try:
         frame = pd.read_csv(path)
-    except FileNotFoundError:
-        print(f"Error: File not found at {path}")
-        print(f"Cannot continue without {contents}. Terminating.")
-        raise
+    except FileNotFoundError as error:
+        raise FileNotFoundError(
+            f"The run needs {contents}, but {path} does not exist."
+        ) from error
 
     records: defaultdict[str, list[Any]] = defaultdict(list)
     for record in frame.to_dict("records"):
@@ -562,8 +567,10 @@ def load_uxhw_distances(
     ):
         return
 
-    print("Warning: UxHw distance distribution data not found in Benchmark object.")
-    print(f"Loading UxHw distance data from {uxhw_distance_file}")
+    print(
+        "The UxHw distances are not in memory. Loading them from "
+        f"{uxhw_distance_file}."
+    )
 
     records_by_variable = _records_by_description(
         uxhw_distance_file, "UxHw distances data"

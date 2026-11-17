@@ -70,7 +70,7 @@ BenchmarkingVariables:
 
 def _configs(*sizes: int) -> list[SyntheticUxhwConfig]:
     """
-    Athens configurations of the given sizes, with correlation tracking off.
+    Athens configurations of the given sizes, with dependency tracking off.
 
     Args:
         sizes: Representation sizes.
@@ -288,7 +288,9 @@ class TestDistanceUxhwVsMcEndToEnd(unittest.TestCase):
     def test_different_types_are_paired_by_size(self) -> None:
         """
         Representation types may differ between the two sides. Pairing goes by
-        size, so Athens-16 meets Jupiter-16 and Atlas-32 meets Atlas-32.
+        size, so Athens-16 meets Rome-16 and Rome-32 meets Rome-32. The
+        baseline SDK predates the rename and records Rome as Atlas, which
+        reads as Rome.
         """
         ground_truth = self._ground_truth(["output"])
         baseline = self._uxhw(
@@ -304,8 +306,8 @@ class TestDistanceUxhwVsMcEndToEnd(unittest.TestCase):
         undertest = self._uxhw(
             "undertest.db",
             [
-                SyntheticUxhwConfig("Atlas", 32 - 3, "Disabled"),
-                SyntheticUxhwConfig("Jupiter", 16 - 3, "Disabled"),
+                SyntheticUxhwConfig("Rome", 32 - 3, "Disabled"),
+                SyntheticUxhwConfig("Rome", 16 - 3, "Disabled"),
             ],
             ["output"],
         )
@@ -316,14 +318,14 @@ class TestDistanceUxhwVsMcEndToEnd(unittest.TestCase):
             undertest,
             [16, 32],
             self._yaml(_BENCHMARKING_VARIABLES_YAML),
-            baseline_types=("Athens", "Atlas"),
-            undertest_types=("Atlas", "Jupiter"),
+            baseline_types=("Athens", "Rome"),
+            undertest_types=("Rome",),
         )
 
         rows = _read_report(self.report)
         self.assertEqual(
             [(row["Baseline Conf"], row["Under-test Conf"]) for row in rows],
-            [("Athens-16", "Jupiter-16"), ("Atlas-32", "Atlas-32")],
+            [("Athens-16", "Rome-16"), ("Rome-32", "Rome-32")],
         )
 
     def test_trace_variables_fallback_reads_every_entry(self) -> None:

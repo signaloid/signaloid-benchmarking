@@ -235,7 +235,7 @@ EOF
 # ships and from the Jupiter memory guard, and logs each skip with its reason.
 # Deciding it there rather than here lets the loader expect exactly what this
 # script measures. Returns 0 (true) if it should be skipped, 1 (false) otherwise.
-# Usage: should_skip_representation REPRESENTATION_TYPE CORRELATION_TRACKING_TYPE REPRESENTATION_SIZE
+# Usage: should_skip_representation REPRESENTATION_TYPE DEPENDENCY_TRACKING_TYPE REPRESENTATION_SIZE
 should_skip_representation() {
     local configuration skipped
     configuration="$(uxhw_config_string "$1" "$3" "$2")"
@@ -271,7 +271,7 @@ exit_status_reason() {
 # Usage: record_failed_configuration CONFIGURATION REASON
 record_failed_configuration() {
     printf '%s\t%s\n' "$1" "$2" >>"$FAILED_CONFIGURATIONS_FILE"
-    warn "WARNING: skipping $1, because $2."
+    warn "Warning: Skipping $1, because $2."
 }
 
 # Give up on a UxHw configuration whose timing run died. The samples it
@@ -285,7 +285,7 @@ abandon_uxhw_testcase() {
     head -n "$((lines_before))" "$TIMING_INTERMEDIATE_FILE" >"$TIMING_INTERMEDIATE_FILE.tmp"
     mv "$TIMING_INTERMEDIATE_FILE.tmp" "$TIMING_INTERMEDIATE_FILE"
     # The digit after the configuration keeps Athens-16 from matching the
-    # samples of Athens-16-Autocorrelation.
+    # samples of Athens-16-Basic.
     rm -f "$LOGS_DIR/inscount-$configuration-"[0-9]*"-$$.out" inscount.out "$UXHW_DB_BASE.db"
     record_failed_configuration "$configuration" "$reason"
 }
@@ -456,38 +456,60 @@ write_timings_header() {
 # Benchmark: UxHw cores
 # ===========================================================================
 
-# Build the canonical UxHw config string "<type>-<size>[-<correlation>]".
-# Disabled correlation tracking is the implicit default and is omitted, so it
-# yields e.g. "Athens-16"; Autocorrelation yields "Athens-16-Autocorrelation".
-# Must stay in lockstep with TaggedDistributionalValue.__repr__ (Python side),
-# since this string is the join key between timing and EMCC data.
+# Build the canonical UxHw config string "<type>-<size>[-<dependency tracking>]".
+# None is the implicit default and is omitted, so it yields e.g. "Athens-16".
+# Basic yields "Athens-16-Basic", and Advanced "Jupiter-16-Advanced".
+# Must stay in lockstep with configuration_string (Python side), since this
+# string is the join key between timing and EMCC data.
 uxhw_config_string() {
-    local repr_type="$1" repr_size="$2" corr_type="$3"
-    if [[ "$corr_type" == "Autocorrelation" ]]; then
-        printf '%s-%s-%s' "$repr_type" "$repr_size" "$corr_type"
-    else
+    local repr_type="$1" repr_size="$2" dependency_tracking="$3"
+    if [[ "$dependency_tracking" == "None" ]]; then
         printf '%s-%s' "$repr_type" "$repr_size"
+    else
+        printf '%s-%s-%s' "$repr_type" "$repr_size" "$dependency_tracking"
+    fi
+}
+
+# The UxHw SDK still takes the earlier names. Rome is built as Atlas on an
+# SDK from before the rename, which signaloid-benchmarking finds out and
+# passes in $SDK_ROME_REPRESENTATION_TYPE. Dependency tracking was called
+# correlation tracking. None was Disabled and Basic was Autocorrelation. The
+# SDK builds an Advanced type, such as Jupiter, with it disabled.
+# Must stay in lockstep with DependencyTracking.TO_SDK (Python side).
+sdk_representation_type() {
+    if [[ "$1" == "Rome" ]]; then
+        printf '%s' "${SDK_ROME_REPRESENTATION_TYPE:-Rome}"
+    else
+        printf '%s' "$1"
+    fi
+}
+
+sdk_dependency_tracking() {
+    if [[ "$1" == "Basic" ]]; then
+        printf 'Autocorrelation'
+    else
+        printf 'Disabled'
     fi
 }
 
 build_uxhw_testcase_binary() {
     local repr_type="$1"
     local repr_size="$2"
-    local corr_type="$3"
+    local dependency_tracking="$3"
 
     uxhw_make clean
 
     local args=(
-        REPRESENTATION_TYPE="$repr_type"
+        REPRESENTATION_TYPE="$(sdk_representation_type "$repr_type")"
         REPRESENTATION_SIZE="$repr_size"
-        CORRELATION_TRACKING="$corr_type"
+        CORRELATION_TRACKING="$(sdk_dependency_tracking "$dependency_tracking")"
         M_CONFIG_FILE="$M_CONFIG_FILE"
         TARGET_ARCH="$TARGET_ARCH"
         ENABLE_UNCERTAIN_TYPE_MODIFIER="$ENABLE_UNCERTAIN_TYPE_MODIFIER"
     )
     uxhw_make "${args[@]}"
 
-    mv "$PROGRAM" "$PROGRAM-$(uxhw_config_string "$repr_type" "$repr_size" "$corr_type")"
+    mv "$PROGRAM" "$PROGRAM-$(uxhw_config_string "$repr_type" "$repr_size" "$dependency_tracking")"
 
     uxhw_make clean
 }
@@ -497,16 +519,16 @@ run_uxhw_benchmarks() {
 
     UXHW_TESTCASES=()
 
-    for CORRELATION_TRACKING_TYPE in "${CORRELATION_TRACKING_TYPES[@]}"; do
+    for DEPENDENCY_TRACKING_TYPE in "${DEPENDENCY_TRACKING_TYPES[@]}"; do
         for REPRESENTATION_TYPE in "${REPRESENTATION_TYPES[@]}"; do
             for REPRESENTATION_SIZE in "${REPRESENTATION_SIZES[@]}"; do
-                if should_skip_representation "$REPRESENTATION_TYPE" "$CORRELATION_TRACKING_TYPE" "$REPRESENTATION_SIZE"; then
+                if should_skip_representation "$REPRESENTATION_TYPE" "$DEPENDENCY_TRACKING_TYPE" "$REPRESENTATION_SIZE"; then
                     continue
                 fi
 
-                build_uxhw_testcase_binary "$REPRESENTATION_TYPE" "$REPRESENTATION_SIZE" "$CORRELATION_TRACKING_TYPE"
+                build_uxhw_testcase_binary "$REPRESENTATION_TYPE" "$REPRESENTATION_SIZE" "$DEPENDENCY_TRACKING_TYPE"
 
-                UXHW_TESTCASES+=("$(uxhw_config_string "$REPRESENTATION_TYPE" "$REPRESENTATION_SIZE" "$CORRELATION_TRACKING_TYPE")")
+                UXHW_TESTCASES+=("$(uxhw_config_string "$REPRESENTATION_TYPE" "$REPRESENTATION_SIZE" "$DEPENDENCY_TRACKING_TYPE")")
             done
         done
     done
@@ -572,7 +594,7 @@ run_uxhw_benchmarks() {
                     continue 2
                 fi
                 if [[ ! -f inscount.out ]]; then
-                    die "inscount.out not found after PIN execution"
+                    die "Intel PIN ran but wrote no inscount.out in $(pwd). Check that the inscount0 tool at $PIN_TOOL works."
                 fi
                 local uxhw_sample_path="$LOGS_DIR/inscount-$UXHW_TESTCASE-$i-$$.out"
                 mv inscount.out "$uxhw_sample_path"
@@ -641,15 +663,15 @@ run_uxhw_tracing() {
     local verify_failed_configs=()
 
     # Phase 1: Serial compilation — build each config and rename the binary
-    for CORRELATION_TRACKING_TYPE in "${CORRELATION_TRACKING_TYPES[@]}"; do
+    for DEPENDENCY_TRACKING_TYPE in "${DEPENDENCY_TRACKING_TYPES[@]}"; do
         for REPRESENTATION_TYPE in "${REPRESENTATION_TYPES[@]}"; do
             for REPRESENTATION_SIZE in "${REPRESENTATION_SIZES[@]}"; do
-                if should_skip_representation "$REPRESENTATION_TYPE" "$CORRELATION_TRACKING_TYPE" "$REPRESENTATION_SIZE"; then
+                if should_skip_representation "$REPRESENTATION_TYPE" "$DEPENDENCY_TRACKING_TYPE" "$REPRESENTATION_SIZE"; then
                     continue
                 fi
 
                 local suffix
-                suffix="$(uxhw_config_string "$REPRESENTATION_TYPE" "$REPRESENTATION_SIZE" "$CORRELATION_TRACKING_TYPE")"
+                suffix="$(uxhw_config_string "$REPRESENTATION_TYPE" "$REPRESENTATION_SIZE" "$DEPENDENCY_TRACKING_TYPE")"
                 local binary_name="$PROGRAM-tracing-$suffix"
                 local per_config_db="${TRACING_DB_ABS%.db}-$suffix.db"
                 local per_config_m="run-tracing-$suffix.m"
@@ -663,9 +685,9 @@ run_uxhw_tracing() {
                 # their emulator config, tracing and DB, and the
                 # verification build's OPTFLAGS.
                 local common_args=(
-                    REPRESENTATION_TYPE="$REPRESENTATION_TYPE"
+                    REPRESENTATION_TYPE="$(sdk_representation_type "$REPRESENTATION_TYPE")"
                     REPRESENTATION_SIZE="$REPRESENTATION_SIZE"
-                    CORRELATION_TRACKING="$CORRELATION_TRACKING_TYPE"
+                    CORRELATION_TRACKING="$(sdk_dependency_tracking "$DEPENDENCY_TRACKING_TYPE")"
                     TARGET_ARCH="$TARGET_ARCH"
                     ENABLE_UNCERTAIN_TYPE_MODIFIER="$ENABLE_UNCERTAIN_TYPE_MODIFIER"
                     STATS_DB_TABLENAME="Emulator_Execution_Info"
@@ -711,7 +733,7 @@ run_uxhw_tracing() {
                     verify_baseline_stdouts+=("$APPLICATION_PATH/src/$binary_name.stdout")
                     verify_configs+=("$suffix")
                 else
-                    warn "WARNING: verification build failed (OPTFLAGS='$verify_optflags') for config '$suffix'; skipping its Ux-string check."
+                    warn "Warning: The verification build with OPTFLAGS='$verify_optflags' failed for config '$suffix'. Its Ux-string check is skipped."
                     verify_failed_configs+=("$suffix (build failed)")
                     rm -f "$verify_m" "$verify_db" "$PROGRAM"
                 fi
@@ -763,7 +785,7 @@ run_uxhw_tracing() {
         if [[ "$failed_configs" == *" ${verify_configs[$i]} "* ]]; then
             verify_stdouts[$i]=""
         elif [[ $status -ne 0 ]]; then
-            warn "WARNING: -O2 verification run failed for config '${verify_configs[$i]}'; skipping its Ux-string check."
+            warn "Warning: The -O2 verification run failed for config '${verify_configs[$i]}'. Its Ux-string check is skipped."
             verify_failed_configs+=("${verify_configs[$i]} (run failed)")
             verify_stdouts[$i]=""
         fi
@@ -799,7 +821,7 @@ run_uxhw_tracing() {
     # failure). These are skipped for comparison but surfaced here as failing
     # so an -O2 build/run regression is not silently swallowed.
     if [[ ${#verify_failed_configs[@]} -gt 0 ]]; then
-        warn "WARNING: -O2 ux-string verification FAILED (build/run) for ${#verify_failed_configs[@]} config(s): ${verify_failed_configs[*]}"
+        warn "Warning: The -O2 Ux-string verification could not build or run for ${#verify_failed_configs[@]} config(s), ${verify_failed_configs[*]}."
     fi
 
     # Phase 3: Merge per-config DBs into final tracing DB. When every run
@@ -810,7 +832,7 @@ run_uxhw_tracing() {
             "$BENCHMARKING_PYTHON" -m signaloid_benchmarking.automation.merge_tracing_dbs \
             "$TRACING_DB_ABS" "${tracing_dbs[@]}"
     else
-        warn "WARNING: every tracing run died, so there is nothing to merge."
+        warn "Warning: Every tracing run died, so there is nothing to merge."
     fi
 
     # Cleanup temporary binaries and config files
@@ -909,7 +931,7 @@ run_native_mc_benchmarks() {
             echo "Found demo-native-mc in application root, using it as $PROGRAM-native"
             cp "$APPLICATION_PATH/demo-native-mc" "./$PROGRAM-native"
         else
-            die "demo-native-mc not found either"
+            die "The native build failed, and there is no prebuilt demo-native-mc in $(pwd) or $APPLICATION_PATH. See $NATIVE_MC_BUILD_LOG."
         fi
     fi
 
@@ -1004,7 +1026,7 @@ run_native_mc_benchmarks() {
                 [ -t 1 ] && echo -ne "\rRepetitions ($i/$native_mc_repetition_pin)"
                 $INSTRUCTION_COUNT_COMMAND "$APPLICATION_PATH/src/$PROGRAM-native" $CLA $CLA_FOR_MULTIPLE_EXECUTIONS "$REFERENCE_PRECISION" &>/dev/null
                 if [[ ! -f inscount.out ]]; then
-                    die "inscount.out not found after PIN execution"
+                    die "Intel PIN ran but wrote no inscount.out in $(pwd). Check that the inscount0 tool at $PIN_TOOL works."
                 fi
                 pin_dyn_inst_array+=$(sed 's/Count //' inscount.out)
                 pin_dyn_inst_array+=","
@@ -1092,7 +1114,7 @@ main() {
 
     default_array REPRESENTATION_TYPES Athens
     default_array REPRESENTATION_SIZES 16 32 64 128 256 512
-    default_array CORRELATION_TRACKING_TYPES Disabled Autocorrelation
+    default_array DEPENDENCY_TRACKING_TYPES None Basic
 
     [[ -f "$SCRIPT_DIR/get_timings_local.sh" ]] && source "$SCRIPT_DIR/get_timings_local.sh"
 

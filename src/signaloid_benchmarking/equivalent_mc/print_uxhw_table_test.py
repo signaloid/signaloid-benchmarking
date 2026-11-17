@@ -34,14 +34,14 @@ from signaloid.distributional.distributional import DistributionalValue
 def _tagged(
     dv: DistributionalValue,
     representation_type: str,
-    correlation_tracking: str = "Disabled",
+    dependency_tracking: str = "None",
 ) -> TaggedDistributionalValue:
     """A UxHw carrier as produced by the tracing-table loader in load.py."""
     return TaggedDistributionalValue(
         dv=dv,
         representation_type=representation_type,
         representation_size=dv.UR_order,
-        correlation_tracking=correlation_tracking,
+        dependency_tracking=dependency_tracking,
     )
 
 

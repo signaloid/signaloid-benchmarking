@@ -33,7 +33,7 @@ the API.
 """
 
 from signaloid_benchmarking.config import (
-    Correlations,
+    DependencyTracking,
     DistanceMetrics,
     ReportingMethods,
     RepresentationTypes,
@@ -52,7 +52,7 @@ __all__ = [
     "BenchmarkingVariable",
     "DistanceMetrics",
     "RepresentationTypes",
-    "Correlations",
+    "DependencyTracking",
     "ReportingMethods",
     "VariableTypes",
     "anderson_darling_test",

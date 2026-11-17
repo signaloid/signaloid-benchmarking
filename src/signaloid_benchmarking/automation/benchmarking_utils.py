@@ -21,6 +21,7 @@
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterable, Iterator
+import difflib
 import subprocess
 import math
 import os
@@ -29,7 +30,9 @@ import pandas as pd
 from signaloid_benchmarking.config import (
     BenchmarkingVariables,
     EquivMC,
+    SignaloidYaml,
     TimingFormat,
+    VariableTypes,
 )
 from signaloid.distributional.distributional import DistributionalValue
 from signaloid_benchmarking.types import (
@@ -97,7 +100,9 @@ def _read_pin_inst_count(path: str) -> float:
     with open(path) as f:
         content = f.read().strip()
     if not content.startswith("Count "):
-        raise ValueError(f"Unexpected inscount.out format in {path!r}: {content!r}")
+        raise ValueError(
+            f"{path} should start with 'Count ', but it reads {content!r}."
+        )
     return float(content.removeprefix("Count "))
 
 
@@ -532,6 +537,365 @@ def clean_data_for_sheets(rows: list[list[Any]]) -> list[list[Any]]:
     return cleaned_rows
 
 
+def _missing_keys(entry: Any, keys: list[str], where: str, problems: list[str]) -> bool:
+    """
+    Record the keys a signaloid.yaml entry lacks.
+
+    Args:
+        entry: The entry as read from the YAML.
+        keys: The keys it must have.
+        where: How to name the entry in a problem.
+        problems: The list each problem is added to.
+
+    Returns:
+        True when the entry is not a mapping or lacks a key.
+    """
+    if not isinstance(entry, dict):
+        problems.append(f"{where} is not a set of 'Key: value' lines.")
+        return True
+    missing = [key for key in keys if key not in entry]
+    if missing:
+        problems.append(f"{where} has no {', '.join(missing)}.")
+        return True
+
+    return False
+
+
+def check_signaloid_yaml(signaloid_yaml_path: str, signaloid_yaml: Any) -> None:
+    """
+    Check that signaloid.yaml has every key the run reads.
+
+    A missing key would otherwise stop the run as a bare KeyError, and an
+    unknown OutputObject would only fail after the tracing runs. Every
+    problem is reported at once.
+
+    Args:
+        signaloid_yaml_path: The file, to name in the error.
+        signaloid_yaml: Its contents as read by ``yaml.safe_load``.
+
+    Raises:
+        ValueError: A key is missing or has a value the run cannot use.
+    """
+    problems: list[str] = []
+
+    if not isinstance(signaloid_yaml, dict):
+        signaloid_yaml = {}
+    trace_variables = signaloid_yaml.get(SignaloidYaml.TRACE_VARIABLES)
+    if not isinstance(trace_variables, list) or not trace_variables:
+        problems.append(f"There is no {SignaloidYaml.TRACE_VARIABLES} list.")
+        trace_variables = []
+    traced_entries = [
+        entry
+        for index, entry in enumerate(trace_variables)
+        if not _missing_keys(
+            entry,
+            [SignaloidYaml.FILE, SignaloidYaml.LINE_NUMBER, SignaloidYaml.EXPRESSION],
+            f"{SignaloidYaml.TRACE_VARIABLES} entry {index + 1}",
+            problems,
+        )
+    ]
+
+    # Only the newer format names its outputs. The older one benchmarks
+    # every traced expression.
+    benchmarking_variables = signaloid_yaml.get(SignaloidYaml.BENCHMARKING_VARIABLES)
+    if benchmarking_variables is not None:
+        all_outputs = signaloid_yaml.get(SignaloidYaml.ALL_OUTPUTS)
+        if not isinstance(all_outputs, list) or not all_outputs:
+            problems.append(
+                f"There is a {SignaloidYaml.BENCHMARKING_VARIABLES} list but "
+                f"no {SignaloidYaml.ALL_OUTPUTS} list. The tracing runs need "
+                "the arguments that compute every output at once."
+            )
+        else:
+            _missing_keys(
+                all_outputs[0],
+                [SignaloidYaml.COMMAND_LINE_ARGUMENTS],
+                f"The first {SignaloidYaml.ALL_OUTPUTS} entry",
+                problems,
+            )
+        if not isinstance(benchmarking_variables, list):
+            problems.append(f"{SignaloidYaml.BENCHMARKING_VARIABLES} is not a list.")
+            benchmarking_variables = []
+
+        traced = [
+            entry[SignaloidYaml.EXPRESSION]
+            for entry in expand_array_expressions(traced_entries)
+        ]
+        output_objects = [VariableTypes.DISTRIBUTION, VariableTypes.SCALAR]
+        for index, entry in enumerate(benchmarking_variables):
+            where = f"{SignaloidYaml.BENCHMARKING_VARIABLES} entry {index + 1}"
+            if _missing_keys(
+                entry,
+                [
+                    SignaloidYaml.VARIABLE_NAME,
+                    SignaloidYaml.VARIABLE_DESCRIPTION,
+                    SignaloidYaml.OUTPUT_OBJECT,
+                    SignaloidYaml.COMMAND_LINE_ARGUMENTS,
+                ],
+                where,
+                problems,
+            ):
+                continue
+            variable_name = entry[SignaloidYaml.VARIABLE_NAME]
+            where = f"{where} ('{variable_name}')"
+            output_object = entry[SignaloidYaml.OUTPUT_OBJECT]
+            if output_object not in output_objects:
+                problems.append(
+                    f"{where} has {SignaloidYaml.OUTPUT_OBJECT} "
+                    f"'{output_object}'. Use "
+                    f"{' or '.join(repr(name) for name in output_objects)}."
+                )
+            if traced and variable_name not in traced:
+                close = difflib.get_close_matches(str(variable_name), traced, n=1)
+                hint = (
+                    f"Did you mean '{close[0]}'?"
+                    if close
+                    else f"The traced expressions are {', '.join(traced)}."
+                )
+                problems.append(
+                    f"{where} is not traced. Its {SignaloidYaml.VARIABLE_NAME} "
+                    f"must match a {SignaloidYaml.TRACE_VARIABLES} expression. "
+                    f"{hint}"
+                )
+
+    if problems:
+        raise ValueError(
+            f"{signaloid_yaml_path} cannot be used.\n  - " + "\n  - ".join(problems)
+        )
+
+
+# C keywords that start a statement which uses names rather than declaring
+# them.
+_STATEMENT_KEYWORDS = (
+    "return|else|case|goto|sizeof|if|while|for|switch|do|break|continue"
+)
+
+# Comments, string and character literals, and preprocessor lines. They can
+# hold a name, a ``;``, or a brace that is not code.
+_NOT_CODE = re.compile(
+    r"//[^\n]*|/\*.*?\*/|\"(?:\\.|[^\"\\\n])*\"|'(?:\\.|[^'\\\n])*'" r"|^[ \t]*#[^\n]*",
+    re.DOTALL | re.MULTILINE,
+)
+
+
+def _code_lines(source: str) -> list[str]:
+    """
+    Blank out what is not code, keeping every line where it was.
+
+    Args:
+        source: A C source file.
+
+    Returns:
+        Its lines, with comments, literals, and preprocessor lines blanked.
+    """
+
+    def blank(match: re.Match[str]) -> str:
+        return "\n" * match.group(0).count("\n")
+
+    return _NOT_CODE.sub(blank, source).split("\n")
+
+
+def _statements(code_lines: list[str]) -> list[tuple[int, int, str]]:
+    """
+    Split code into statements at ``;``, ``{``, and ``}``.
+
+    A declaration can span lines, or name several variables, so it is
+    judged as a whole statement rather than line by line.
+
+    Args:
+        code_lines: Lines from ``_code_lines``.
+
+    Returns:
+        Each statement's first line, last line, and text, with lines
+        numbered from 1.
+    """
+    statements = []
+    text: list[str] = []
+    first_line = 0
+    for line_number, line in enumerate(code_lines, start=1):
+        for character in line:
+            if not text and character.isspace():
+                continue
+            if not text:
+                first_line = line_number
+            text.append(character)
+            if character in ";{}":
+                statements.append((first_line, line_number, "".join(text)))
+                text = []
+        if text:
+            text.append(" ")
+
+    return statements
+
+
+def _declaration_pattern(variable_name: str) -> re.Pattern[str]:
+    """
+    Match a C statement that declares ``variable_name``.
+
+    The statement starts with one or more type words, such as ``uncertain
+    double`` or ``char *const``. Other declarators may come first, as in
+    ``double x, y[2]``. Then come the name and ``[``, ``=``, ``;``, ``,``,
+    or ``)``. A use such as ``f(x)`` or ``x[0] = y`` has no type words
+    before the name, so it does not match.
+
+    Args:
+        variable_name: The C identifier.
+
+    Returns:
+        The compiled pattern.
+    """
+    return re.compile(
+        rf"^\s*(?!(?:{_STATEMENT_KEYWORDS})\b)(?:[A-Za-z_]\w*[\s*]+)+"
+        r"(?:\**\s*[A-Za-z_]\w*[^;]*?,\s*)?\**\s*"
+        + re.escape(variable_name)
+        + r"\s*[\[=;,)]"
+    )
+
+
+def _is_use(statement: str, variable_name: str) -> bool:
+    """
+    Say whether a statement certainly uses names rather than declaring them.
+
+    It starts with a keyword such as ``return``, or with the variable
+    itself. Or it is a whole call such as ``f(x);``, or an assignment to
+    another name. A macro that declares, such as ``DECLARE(x)``, has no
+    ``;`` of its own, so it is not taken for a call.
+
+    Args:
+        statement: The statement text.
+        variable_name: The traced C identifier.
+
+    Returns:
+        ``True`` when the statement is certainly not a declaration.
+    """
+    return bool(
+        re.match(rf"\s*(?:{_STATEMENT_KEYWORDS})\b", statement)
+        or re.match(rf"[\s*&(!~+-]*{re.escape(variable_name)}\b", statement)
+        or re.fullmatch(r"\s*[A-Za-z_]\w*\s*\(.*\)\s*;\s*", statement, re.DOTALL)
+        or re.match(
+            r"\s*[A-Za-z_]\w*\s*(?:\[|\.|->|\+\+|--|[-+*/%&|^]?=(?!=))",
+            statement,
+        )
+    )
+
+
+def check_trace_variable_lines(
+    path_to_application: str, trace_variables: list[dict]
+) -> None:
+    """
+    Check that each traced expression's LineNumber declares its variable.
+
+    The tracer resolves a trace against the line where the variable is
+    declared, which is the line that holds its name. A line that only uses
+    the variable gives an empty tracing database with no error, so this is
+    checked before anything is built. A declaration may span lines or name
+    several variables.
+
+    A line that is certainly wrong stops the run. It does not hold the
+    name, or it holds a use such as a call or an assignment. Every wrong
+    entry is reported at once, each with the line or lines that do declare
+    the variable. A line that holds the name in a layout this check does
+    not recognize, such as a function parameter, only gives a warning.
+
+    Args:
+        path_to_application: The application root. Sources are in ``src``.
+        trace_variables: The ``TraceVariables`` entries of signaloid.yaml.
+
+    Raises:
+        ValueError: An entry names a missing file, a line outside the
+            file, or a line that does not declare its variable.
+    """
+    problems = []
+
+    for entry in trace_variables:
+        expression = entry[SignaloidYaml.EXPRESSION]
+        file_name = entry[SignaloidYaml.FILE]
+        line_number = entry[SignaloidYaml.LINE_NUMBER]
+        where = f"'{expression}' in {file_name} line {line_number}"
+
+        # The variable is the leading identifier, so 'outputVariables[0:3]'
+        # and 'arguments.value' are declared as 'outputVariables' and
+        # 'arguments'. An expression without one is left unchecked.
+        name_match = re.match(r"\s*([A-Za-z_]\w*)", str(expression))
+        if name_match is None:
+            continue
+        variable_name = name_match.group(1)
+
+        source_path = os.path.join(path_to_application, "src", file_name)
+        if not os.path.isfile(source_path):
+            problems.append(f"{where} points to a missing file, {source_path}.")
+            continue
+
+        try:
+            line = int(line_number)
+        except (TypeError, ValueError):
+            problems.append(f"{where} has a LineNumber that is not a whole number.")
+            continue
+
+        with open(source_path, "r", errors="replace") as source_file:
+            source = source_file.read()
+        lines = source.splitlines()
+        code_lines = _code_lines(source)
+        statements = _statements(code_lines)
+        declares = _declaration_pattern(variable_name)
+        name = re.compile(rf"\b{re.escape(variable_name)}\b")
+
+        def statements_naming(index: int) -> list[str]:
+            """The statements on line ``index`` when the line holds the name."""
+            if not 1 <= index <= len(code_lines):
+                return []
+            if not name.search(code_lines[index - 1]):
+                return []
+            return [
+                text
+                for first, last, text in statements
+                if first <= index <= last and name.search(text)
+            ]
+
+        candidates = statements_naming(line)
+        if any(declares.search(text) for text in candidates):
+            continue
+
+        if 1 <= line <= len(lines) and lines[line - 1].strip():
+            found = f"Line {line} reads '{lines[line - 1].strip()}'."
+        elif 1 <= line <= len(lines):
+            found = f"Line {line} is empty."
+        else:
+            found = f"{file_name} has {len(lines)} lines."
+
+        if candidates and not all(_is_use(text, variable_name) for text in candidates):
+            print(
+                f"Warning: cannot tell whether {where} declares "
+                f"'{variable_name}'. {found} If the tracing database comes "
+                "out empty, set LineNumber to the line that declares it."
+            )
+            continue
+
+        declared_on = [
+            str(index)
+            for index in range(1, len(code_lines) + 1)
+            if any(declares.search(text) for text in statements_naming(index))
+        ]
+        if len(declared_on) == 1:
+            hint = f"Did you mean LineNumber {declared_on[0]}?"
+        elif declared_on:
+            hint = (
+                f"'{variable_name}' is declared on lines "
+                f"{', '.join(declared_on)}. Pick the one in the scope "
+                "where it is traced."
+            )
+        else:
+            hint = f"No line in {file_name} declares '{variable_name}'."
+        problems.append(f"{where} does not declare '{variable_name}'. {found} {hint}")
+
+    if problems:
+        raise ValueError(
+            "signaloid.yaml TraceVariables do not match the source. "
+            "LineNumber must be the line that declares the variable.\n  - "
+            + "\n  - ".join(problems)
+        )
+
+
 def expand_array_expressions(data: list[dict]) -> list[dict]:
     """
     Expand array expressions like 'outputVariables[0:5]' into individual entries.
@@ -601,7 +965,9 @@ def _run_mc_simulation(
     ) as (result, data_file):
         if result.returncode != 0:
             raise RuntimeError(
-                f"Simulation {index} returned non-zero exit code: {result.stderr}"
+                f"Native Monte Carlo run {index} ({native_executable_name} "
+                f"{cla}, sample size {sub_size}) exited with code "
+                f"{result.returncode}.\n{result.stderr.strip()}"
             )
 
         # Read results
@@ -647,10 +1013,10 @@ def compute_emcc_prediction(
         emcc_predicted = math.ceil((asymptotic_dist_quantity / distance) ** 2)
         # Check results make sense
         if emcc_predicted < 1:
-            print("Warning! Predicted EMCC values are zero!")
+            print("Warning: The predicted EMCC is below 1. Using 1.")
             emcc_predicted = 1
     except (TypeError, ZeroDivisionError, ValueError, OverflowError) as e:
-        print(f"Warning. EMCC prediction failed with: {e}.")
+        print(f"Warning: The EMCC prediction failed, so 1 is used. {e}")
         emcc_predicted = 1
 
     return emcc_predicted

@@ -62,9 +62,10 @@ class TaggedDistributionalValue:
             ``"Athens"``, ``"MonteCarlo"``, ``"WeightedSamples"``).
         representation_size: Build size N for the representation. For Athens this
             is ``UR_Order``. Otherwise ``UR_Order_CoreLibrary``.
-        correlation_tracking: Correlation-tracking status string from the DB
-            (e.g. ``"Disabled"``, ``"Autocorrelation"``). ``None`` for
-            ground-truth and adversary loads that carry no correlation metadata.
+        dependency_tracking: Dependency tracking mode, translated from the
+            DB (``"None"``, ``"Basic"``, or ``"Advanced"``). ``None`` for
+            ground-truth and adversary loads that carry no dependency
+            tracking metadata.
         mc_count: Monte Carlo sample count for scalar loads, ``None``
             otherwise.
     """
@@ -72,7 +73,7 @@ class TaggedDistributionalValue:
     dv: DistributionalValue
     representation_type: str | None = None
     representation_size: int | None = None
-    correlation_tracking: str | None = None
+    dependency_tracking: str | None = None
     mc_count: int | None = None
 
     def __repr__(self) -> str:
@@ -84,7 +85,7 @@ class TaggedDistributionalValue:
         return configuration_string(
             representation_type=str(self.representation_type),
             representation_size=self.representation_size,  # type: ignore[arg-type]
-            correlation=str(self.correlation_tracking),
+            dependency_tracking=str(self.dependency_tracking),
         )
 
 
@@ -291,8 +292,8 @@ class AsymptoticDistribution:
             }[reporting_method]
         except KeyError as exc:
             raise KeyError(
-                f"Unknown reporting method {reporting_method!r}; "
-                f"expected one of {{Mean, Quantile-95, Quantile-99}}."
+                f"Unknown reporting method {reporting_method!r}. "
+                "Use Mean, Quantile-95 or Quantile-99."
             ) from exc
 
 
@@ -314,7 +315,7 @@ class BenchmarkingVariable:
         cla: str = "",
         representation_types: list[str] | None = None,
         representation_sizes: list[int] | None = None,
-        correlations: list[str] | None = None,
+        dependency_tracking_modes: list[str] | None = None,
         analytic_ground_truth: str | None = None,
     ):
         """
@@ -338,7 +339,7 @@ class BenchmarkingVariable:
                 variable on, in place of ``-u``.
             representation_sizes: Representation sizes to measure this
                 variable on, in place of ``-s``.
-            correlations: Correlation tracking modes to measure this
+            dependency_tracking_modes: Dependency tracking modes to measure this
                 variable on, in place of ``-c``.
             analytic_ground_truth: Absolute path of the script that writes
                 this variable's exact reference, in place of
@@ -355,7 +356,7 @@ class BenchmarkingVariable:
         self.cla = cla
         self.representation_types = representation_types
         self.representation_sizes = representation_sizes
-        self.correlations = correlations
+        self.dependency_tracking_modes = dependency_tracking_modes
         self.analytic_ground_truth = analytic_ground_truth
         # Configurations of this variable's matrix that cannot run, each
         # with its reason, keyed as configuration_string names them.
@@ -380,7 +381,7 @@ class BenchmarkingVariable:
         *,
         representation_types: list[str],
         representation_sizes: list[int],
-        correlations: list[str],
+        dependency_tracking_modes: list[str],
     ) -> tuple[list[str], list[int], list[str]]:
         """
         Return the representations this variable is measured on.
@@ -388,10 +389,10 @@ class BenchmarkingVariable:
         Args:
             representation_types: The run-wide types, from ``-u``.
             representation_sizes: The run-wide sizes, from ``-s``.
-            correlations: The run-wide correlation modes, from ``-c``.
+            dependency_tracking_modes: The run-wide dependency tracking modes, from ``-c``.
 
         Returns:
-            The types, sizes and correlation modes, each taken from this
+            The types, sizes and dependency tracking modes, each taken from this
             variable's own signaloid.yaml entry when it declared one and
             from the run-wide argument otherwise.
         """
@@ -406,7 +407,11 @@ class BenchmarkingVariable:
                 if self.representation_sizes is None
                 else self.representation_sizes
             ),
-            correlations if self.correlations is None else self.correlations,
+            (
+                dependency_tracking_modes
+                if self.dependency_tracking_modes is None
+                else self.dependency_tracking_modes
+            ),
         )
 
     def benchmarked_configurations(
@@ -414,7 +419,7 @@ class BenchmarkingVariable:
         *,
         representation_types: list[str],
         representation_sizes: list[int],
-        correlations: list[str],
+        dependency_tracking_modes: list[str],
     ) -> list[str]:
         """
         Name every configuration this variable is measured on.
@@ -422,7 +427,7 @@ class BenchmarkingVariable:
         Args:
             representation_types: The run-wide types, from ``-u``.
             representation_sizes: The run-wide sizes, from ``-s``.
-            correlations: The run-wide correlation modes, from ``-c``.
+            dependency_tracking_modes: The run-wide dependency tracking modes, from ``-c``.
 
         Returns:
             Each configuration of this variable's matrix that is not
@@ -431,17 +436,17 @@ class BenchmarkingVariable:
         types, sizes, modes = self.representation_matrix(
             representation_types=representation_types,
             representation_sizes=representation_sizes,
-            correlations=correlations,
+            dependency_tracking_modes=dependency_tracking_modes,
         )
 
         configurations = []
         for representation_type in types:
             for representation_size in sizes:
-                for correlation in modes:
+                for dependency_tracking in modes:
                     configuration = configuration_string(
                         representation_type=representation_type,
                         representation_size=representation_size,
-                        correlation=correlation,
+                        dependency_tracking=dependency_tracking,
                     )
                     if configuration not in self.skipped_configurations:
                         configurations.append(configuration)

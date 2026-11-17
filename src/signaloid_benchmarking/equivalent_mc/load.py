@@ -26,6 +26,7 @@ import pandas as pd
 from signaloid.distributional.distributional import DistributionalValue
 from signaloid_benchmarking.types import TaggedDistributionalValue
 from signaloid_benchmarking.config import (
+    DependencyTracking,
     VariableTypes,
     RepresentationTypes,
     STRING_TO_CORE_REPRESENTATION,
@@ -65,7 +66,37 @@ def _connect_to_database(db_path: str) -> sqlite3.Connection:
     except sqlite3.DatabaseError as e:
         raise FileNotFoundError(f"{db_path} is not a valid SQLite database.") from e
     except Exception as e:
-        raise FileNotFoundError(f"Could not connect to {db_path}: {e}") from e
+        raise FileNotFoundError(f"Could not open {db_path}. {e}") from e
+
+
+def _check_traced_in_one_place(
+    frame: pd.DataFrame, table: str, target_expression: str
+) -> None:
+    """
+    Check that the rows of an expression come from one place in the source.
+
+    Rows from two subprograms or two declaration lines cannot be told
+    apart, so the values loaded would be a mix.
+
+    Args:
+        frame: The rows of ``target_expression``.
+        table: The table they were read from.
+        target_expression: The traced expression.
+
+    Raises:
+        ValueError: There are no rows, or they come from more than one
+            subprogram or declaration line.
+    """
+    if frame.empty:
+        raise ValueError(f"Table {table} has no rows for {target_expression}.")
+    for column in ("Expression_Subprogram", "Expression_DeclarationLineNumber"):
+        values = sorted(frame[column].unique())
+        if len(values) > 1:
+            raise ValueError(
+                f"Table {table} has rows for {target_expression} with "
+                f"{len(values)} different {column} values, {values}. The "
+                "expression must be traced in one place, or the rows are a mix."
+            )
 
 
 _LoadResult = TypeVar("_LoadResult")
@@ -156,7 +187,10 @@ def _load_ground_truth(
             )
             tagged = _max_mc_count(tagged_list)
         else:
-            raise ValueError(f"Error! Expression type {expression_type} not supported!")
+            raise ValueError(
+                f"{target_expression} has the type {expression_type!r}. Use "
+                f"{VariableTypes.DISTRIBUTION!r} or {VariableTypes.SCALAR!r}."
+            )
 
     return tagged
 
@@ -197,7 +231,10 @@ def _max_mc_count(
     """
     valid_objects = [obj for obj in tagged_list if obj.mc_count is not None]
     if not valid_objects:
-        raise ValueError("No valid objects with non-None mc_count found")
+        raise ValueError(
+            f"None of the {len(tagged_list)} scalar ground-truth values has a "
+            "Monte Carlo count, so the largest run cannot be picked."
+        )
 
     def get_mc_count(obj: TaggedDistributionalValue) -> int:
         assert obj.mc_count is not None  # We filtered these out above
@@ -245,26 +282,7 @@ def _load_mc_with_con(
         as_index=False,
     ).aggregate(func={"Particle_Value": list, "MC_Id": len})
 
-    # Multiple subprograms tracing the same expression would be ambiguous.
-    uniq_subprogram = mc_data_info_df["Expression_Subprogram"].unique()
-    if len(uniq_subprogram) != 1:
-        raise ValueError(
-            "Data ambiguity error: Expression_Subprogram unique values count after "
-            + f"filtering is not 1: len(uniq_subprogram)=={len(uniq_subprogram)}"
-        )
-    assert len(uniq_subprogram) == 1
-
-    # Multiple declaration line numbers tracing the same expression would be ambiguous.
-    uniq_declaration_line_number = mc_data_info_df[
-        "Expression_DeclarationLineNumber"
-    ].unique()
-    if len(uniq_declaration_line_number) != 1:
-        raise ValueError(
-            "Data ambiguity error: Expression_DeclarationLineNumber unique values count"
-            + " after filtering is not 1: "
-            + f"len(uniq_declaration_line_number)=={len(uniq_declaration_line_number)}"
-        )
-    assert len(uniq_declaration_line_number) == 1
+    _check_traced_in_one_place(mc_data_info_df, table, target_expression)
 
     # When an expression has multiple assignments, keep only the last one.
     max_assignment_index = mc_data_info_df["Assignment_Index"].max()
@@ -310,7 +328,7 @@ def _load_scalar_mc_with_con(
     )
     mc_data_df = pd.read_sql_query(query, con, params=(target_expression,))
     if mc_data_df.empty:
-        raise ValueError(f"No results found for query: {query}")
+        raise ValueError(f"Table {table} has no rows for {target_expression}.")
 
     # Group by all these columns, aggregate Particle_Value into list
     grouped_df = mc_data_df.groupby(group_cols, as_index=False).agg(
@@ -398,10 +416,10 @@ def _load_scalar_weighted_samples_with_con(
             )
         except ValueError as e:
             raise ValueError(
-                f"{e}: DistributionalValue.from_weighted_samples failed:\n"
-                f"{row['Expression_DeclarationFileName']}:\n"
-                f"{row['Expression_DeclarationLineNumber']}:\n"
-                f"({row['Expression_Name']}), ValueID:{value_id}\n"
+                f"The weighted samples of {row['Expression_Name']} (declared in "
+                f"{row['Expression_DeclarationFileName']} line "
+                f"{row['Expression_DeclarationLineNumber']}, ValueId "
+                f"{value_id}) do not form a distribution. {e}"
             ) from e
 
     return distributions
@@ -439,24 +457,9 @@ def _load_weighted_samples_with_con(
 
     # Early exit if no data
     if weighted_samples_data_info_df.empty:
-        raise ValueError(f"No data found for expression: {target_expression}")
+        raise ValueError(f"Table {table} has no rows for {target_expression}.")
 
-    # Validate uniqueness (faster on aggregated data)
-    uniq_subprogram = weighted_samples_data_info_df["Expression_Subprogram"].unique()
-    if len(uniq_subprogram) != 1:
-        raise RuntimeError(
-            f"Data ambiguity error: Expression_Subprogram unique values count after "
-            f"filtering is not 1: len(uniq_subprogram)=={len(uniq_subprogram)}"
-        )
-
-    uniq_declaration_line_number = weighted_samples_data_info_df[
-        "Expression_DeclarationLineNumber"
-    ].unique()
-    if len(uniq_declaration_line_number) != 1:
-        raise ValueError(
-            f"Data ambiguity error: Expression_DeclarationLineNumber unique values count "
-            f"after filtering is not 1: len(uniq_declaration_line_number)=={len(uniq_declaration_line_number)}"
-        )
+    _check_traced_in_one_place(weighted_samples_data_info_df, table, target_expression)
 
     # Get the single row
     row = weighted_samples_data_info_df.iloc[0]
@@ -481,12 +484,10 @@ def _load_weighted_samples_with_con(
         dv = DistributionalValue.from_weighted_samples(positions, masses)
     except ValueError as e:
         raise ValueError(
-            f"ValueError {e}: DistributionalValue.from_weighted_samples: "
-            f"did not parse UxHw Dist_Value \n"
-            f"{row['Expression_DeclarationFileName']}:\n"
-            f"{row['Expression_DeclarationLineNumber']}:\n"
-            f"({row['Expression_Name']}):\n"
-            f" ValueID:{row['ValueId']}\n"
+            f"The weighted samples of {row['Expression_Name']} (declared in "
+            f"{row['Expression_DeclarationFileName']} line "
+            f"{row['Expression_DeclarationLineNumber']}, ValueId "
+            f"{row['ValueId']}) do not form a distribution. {e}"
         ) from e
 
     return TaggedDistributionalValue(
@@ -504,7 +505,7 @@ def _filter_duplicate_ux_writes(df: pd.DataFrame) -> pd.DataFrame:
     expression, sometimes with a different representation type (e.g. Jupiter
     data under an Athens Execution_ID). For such groups we keep the row whose Ux
     UR_type matches the expected UR_Type from Emulator_Execution_Info, falling
-    back to the first row when none match (e.g. Atlas stores as Ux06 internally).
+    back to the first row when none match (e.g. Rome stores as Ux06 internally).
 
     Args:
         df: Merged UxHw-data / execution-info rows, keyed by Execution_ID,
@@ -544,7 +545,7 @@ def _filter_duplicate_ux_writes(df: pd.DataFrame) -> pd.DataFrame:
         if matching:
             result_rows.append(group.loc[matching[:1]])
         else:
-            # No Ux type matches (e.g., Atlas). Keep the first row
+            # No Ux type matches (e.g., Rome). Keep the first row
             result_rows.append(group.iloc[:1])
 
     result = pd.concat(result_rows, ignore_index=True)
@@ -584,11 +585,11 @@ def _load_uxhw(
     # from `_load_with_connection`. This one has extra params so it opens its
     # own connection).
     with closing(_connect_to_database(db_path)) as con:
-        # Map each requested type to its DB name (currently an identity mapping;
-        # see RepresentationTypes.TO_UXHW_DB).
+        # Map each requested type to every name a database may record it
+        # under. An SDK from before the rename records Rome as Atlas.
         uxhw_db_ur_types = []
         for ur_type in ur_types:
-            uxhw_db_ur_types.append(RepresentationTypes.to_uxhw_db(ur_type))
+            uxhw_db_ur_types.extend(RepresentationTypes.to_uxhw_db(ur_type))
 
         uxhw_data_select = [
             "ValueId",
@@ -610,7 +611,10 @@ def _load_uxhw(
 
         uxhw_data_df = pd.read_sql_query(uxhw_data_query, con, params=tuple(params))
         if uxhw_data_df.empty:
-            raise ValueError("ValueError: " + uxhw_data_query + ": no results ")
+            raise ValueError(
+                f"Table {table} of {db_path} has no rows for {target_expression}"
+                + ("." if value_id is None else f" with ValueId {value_id}.")
+            )
 
         ex_info_select = [
             "Execution_ID",
@@ -621,7 +625,11 @@ def _load_uxhw(
         ]
 
         if not uxhw_db_ur_types or not ur_sizes:
-            raise ValueError("ur_types and ur_sizes must be non-empty")
+            raise ValueError(
+                "At least one representation type and one size are needed to "
+                f"load UxHw values. The types are {ur_types} and the sizes are "
+                f"{ur_sizes}."
+            )
 
         ur_type_placeholders = ",".join(["?"] * len(uxhw_db_ur_types))
         size_placeholders = ",".join(["?"] * len(ur_sizes))
@@ -635,10 +643,11 @@ def _load_uxhw(
 
         ex_info_df = pd.read_sql_query(ex_info_query, con, params=tuple(ex_info_params))
         if ex_info_df.empty:
-            print(
-                f"⚠️  WARNING: Execution info query returned no results:\n{ex_info_query}"
+            raise ValueError(
+                f"{db_path} has no UxHw run with type {ur_types} and size "
+                f"{ur_sizes} in Emulator_Execution_Info. Check that the run "
+                "used these representation types and sizes."
             )
-            raise ValueError("No results from Execution info query.")
 
         uxhw_data_info_df = ex_info_df.merge(
             uxhw_data_df,
@@ -648,10 +657,12 @@ def _load_uxhw(
         )
 
         if uxhw_data_info_df.empty:
-            print(
-                "⚠️ WARNING: Merge of UxHw and Execution info dataframes returned no results."
+            raise ValueError(
+                f"{db_path} has UxHw runs with type {ur_types} and size "
+                f"{ur_sizes}, and table {table} has rows for "
+                f"{target_expression}, but none of those rows came from those "
+                "runs."
             )
-            raise ValueError("No results after merging UxHw data and execution info.")
 
     uxhw_data_info_df = _filter_duplicate_ux_writes(uxhw_data_info_df)
 
@@ -723,7 +734,9 @@ def _dist_value_from_row(uxhw_data_info_sr: pd.Series) -> TaggedDistributionalVa
     dist_value_raw = uxhw_data_info_sr["Dist_Value"]
     dv = DistributionalValue.parse(dist_value_raw)
     if dv is None:
-        raise ValueError(f"Parsing failed for {dist_value_raw!r}.")
+        raise ValueError(
+            f"{dist_value_raw!r} is not a Ux string, so it cannot be read."
+        )
 
     # Read metadata from the DB columns, never off the parsed Distribution.
     representation_type = RepresentationTypes.from_uxhw_db(uxhw_data_info_sr["UR_Type"])
@@ -740,5 +753,7 @@ def _dist_value_from_row(uxhw_data_info_sr: pd.Series) -> TaggedDistributionalVa
         dv=dv,
         representation_type=representation_type,
         representation_size=representation_size,
-        correlation_tracking=uxhw_data_info_sr["CorrelationTracking_Status"],
+        dependency_tracking=DependencyTracking.from_uxhw_db(
+            uxhw_data_info_sr["CorrelationTracking_Status"], representation_type
+        ),
     )

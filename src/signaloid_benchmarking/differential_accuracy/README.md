@@ -1,6 +1,31 @@
-# Differential accuracy
+# Differential Accuracy
 
-Tools that compare how close two UxHw runs land to the same ground truth.
+Tools for regression-testing a UxHw® SDK build. They compare how close two
+UxHw runs of the same application get to the same ground truth. The baseline
+run uses a known-good SDK, and the under-test run uses the new one. Both
+commands come with the package and run on Linux and macOS. See
+[Installation](../../../README.md#installation). Run either with `--help`
+for every option.
+
+## Regression-testing an SDK build
+
+1. Run `signaloid-benchmarking` on the same application with the same
+   settings twice, once with each SDK. Use a separate directory for each
+   run, because a run overwrites the results in its directory.
+   ```bash
+   mkdir ~/run-baseline && cd ~/run-baseline
+   signaloid-benchmarking --path-to-uxhw-sdk /opt/sdk-baseline <settings>
+   mkdir ~/run-under-test && cd ~/run-under-test
+   signaloid-benchmarking --path-to-uxhw-sdk /opt/sdk-under-test <settings>
+   ```
+2. Compare the two tracing databases against the baseline's ground truth
+   with `distance_uxhw_vs_mc`. See [Example](#example).
+3. Optionally, drop the configurations that neither run gets close enough
+   to the ground truth to compare, with `ks_convergence_gate`. See
+   [Running the gate](#running-the-gate).
+
+The [reference](../automation/reference.md#databases) lists the database
+files that a run writes, and their tables.
 
 ## `distance_uxhw_vs_mc`
 
@@ -8,7 +33,8 @@ Tools that compare how close two UxHw runs land to the same ground truth.
 configuration get closer to the ground truth than the baseline did, or
 further away?** It never judges a configuration on its own. Every number in
 the report compares a *baseline* run and an *under-test* run, both measured
-against the same ground truth.
+against the same ground truth. Despite its name, it compares two UxHw runs
+with each other, not UxHw with Monte Carlo.
 
 Source is [distance_uxhw_vs_mc.py](distance_uxhw_vs_mc.py).
 
@@ -16,7 +42,7 @@ Source is [distance_uxhw_vs_mc.py](distance_uxhw_vs_mc.py).
 
 The tool reads the variables to measure from a `signaloid.yaml`. For every
 variable, and for every UxHw configuration (representation type, size and
-correlation tracking) found in the databases, the tool does four things.
+dependency tracking) found in the databases, the tool does four things.
 
 1. It loads the ground truth from the ground truth database.
 2. It loads the matching baseline and under-test UxHw distributions.
@@ -34,37 +60,26 @@ The distance depends on the variable's `OutputObject`.
 For `Scalar` variables the binned columns repeat the non-binned ones. They
 only keep the report table the same shape.
 
-### Running it
-
-Installing the package puts `distance_uxhw_vs_mc` on the path. From a
-checkout, run it through Poetry.
-
-```bash
-poetry run distance_uxhw_vs_mc --help
-```
-
-It also runs as a module.
-
-```bash
-python -m signaloid_benchmarking.differential_accuracy.distance_uxhw_vs_mc --help
-```
-
 ### Example
 
-This compares the Atlas-16 results of two builds of the same application.
-The old build is the baseline and the new build is under test.
+This compares the Athens results of the two runs from
+[Regression-testing an SDK build](#regression-testing-an-sdk-build). The runs
+used the recommended settings, so the ground truth table is
+`WeightedSamples`. With `--ground-truth-type MonteCarlo`, it is `MonteCarlo`.
 
 ```bash
+BASELINE=~/run-baseline/results
+UNDER_TEST=~/run-under-test/results
 distance_uxhw_vs_mc \
-    --ground-truth-database ground-truth.db \
-    --ground-truth-table MonteCarlo \
-    --uxhw-baseline-database old-build.db \
-    --uxhw-under-test-database new-build.db \
-    --uxhw-tables Evaluation \
-    --baseline-uncertainty-representation-type Atlas \
-    --under-test-uncertainty-representation-type Atlas \
-    --uncertainty-representation-sizes 16 \
-    --yaml-signaloid signaloid.yaml \
+    --ground-truth-database $BASELINE/*-ground-*.db \
+    --ground-truth-table WeightedSamples \
+    --uxhw-baseline-database $BASELINE/uxhwExecutionStatistics-*-tracing.db \
+    --uxhw-under-test-database $UNDER_TEST/uxhwExecutionStatistics-*-tracing.db \
+    --uxhw-tables TracingTable \
+    --baseline-uncertainty-representation-type Athens \
+    --under-test-uncertainty-representation-type Athens \
+    --uncertainty-representation-sizes 16 32 64 128 256 512 \
+    --yaml-signaloid ~/my-application/signaloid.yaml \
     --benchmark my-application \
     -o report.md
 ```
@@ -103,12 +118,14 @@ meaningless distances, not an error.
 | `--under-test-uncertainty-representation-type` | yes | none | Representation types to match in the under-test data. |
 | `-s`, `--uncertainty-representation-sizes` | yes | none | Representation sizes to match, as integers. |
 
-Valid representation types are `Athens`, `Jupiter`, `Atlas` and `Europa`.
-All three options take several space-separated values. The size filter
+Valid representation types are `Athens`, `Rome`, `Jupiter`, `Europa`, and
+`Mercury`. `Atlas`, the earlier name of Rome, also works. A `Rome` filter
+matches the databases of SDK releases from before and after the rename. All
+three options take one or more space-separated values. The size filter
 applies to both databases.
 
 The two type filters are separate on purpose. They let you compare *across*
-representations, for example an `Athens` baseline against an `Atlas`
+representations, for example an `Athens` baseline against a `Rome`
 candidate.
 
 #### Variables and output
@@ -139,11 +156,11 @@ BenchmarkingVariables:
 
 #### Older `TraceVariables` files
 
-If the yaml has no `BenchmarkingVariables` key, the tool measures every
+If the YAML file has no `BenchmarkingVariables` key, the tool measures every
 `TraceVariables` entry instead. It expands range expressions, so
 `outputVariables[0:3]` becomes `outputVariables[0]` to `outputVariables[3]`.
 The end index is **inclusive**. Every variable found this way is treated as
-a `Distribution`. New yaml files should declare `BenchmarkingVariables`.
+a `Distribution`. New YAML files should declare `BenchmarkingVariables`.
 
 ### Database expectations
 
@@ -151,19 +168,21 @@ Both UxHw databases must contain the tables named by `--uxhw-tables`. They
 must also describe their configurations in an `Emulator_Execution_Info`
 table.
 
-The tool only understands the keywords that 5.0 and later SDKs write, such
-as `Athens` and `Autocorrelation`. Databases from older SDKs use other
-names, such as `TTR` and `OFF`. The tool does not convert them. They fail
-with `ValueError: No results from Execution info query.`
+The tool only understands the representation type names that SDK 5.0 and
+later write, such as `Athens`. Databases from older SDK releases use other
+names, such as `TTR`. The tool does not convert them. They fail with
+`ValueError: No results from Execution info query.` The SDK records
+dependency tracking under its earlier name, correlation tracking, and the
+tool reads it as dependency tracking.
 
 ### Reading the report
 
-The report is a GitHub-flavoured markdown table. It has one row per
+The report is a GitHub-flavored Markdown table. It has one row per
 variable and configuration.
 
 | Benchmark | Expression | Baseline Conf | Under-test Conf | WD Baseline | WD Under-test | WD Diff | Relative Diff Percentage | Scoring |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| cli-e2e | outputDistribution | Athens-16 | Atlas-16 | 0.233545 | 0.0600875 | -0.173458 | -74.2716 | 🟢 |
+| cli-e2e | `outputDistribution` | Athens-16 | Rome-16 | 0.233545 | 0.0600875 | -0.173458 | -74.2716 | `🟢` |
 
 The real table has five more columns. These are the `Binned WD` versions and
 `Binned Scoring`. They are left out here to save width.
@@ -180,53 +199,54 @@ The real table has five more columns. These are the `Binned WD` versions and
 | `Scoring` | Traffic light for the relative difference. See below. |
 
 **Lower is better throughout, and negative differences are good.** A
-negative `WD Diff` means the under-test run landed closer to the ground
-truth than the baseline did.
+negative `WD Diff` means the under-test run is closer to the ground
+truth than the baseline is.
 
-The configuration strings have the form `Representation-Size`. Enabled
-correlation tracking adds `-Autocorrelation`, as in `Athens-16` or
-`Atlas-64-Autocorrelation`. Disabled correlation tracking is the default and
-adds nothing. So `Atlas-64` means correlation tracking was off. This string
+The configuration strings have the form `Representation-Size`, followed by
+the dependency tracking unless it is `None`. So `Athens-64` has no
+dependency tracking, `Athens-64-Basic` has Basic, and `Jupiter-64-Advanced`
+has Advanced. This string
 matches the `UXHW_CONF` key in the EMCC CSV byte for byte. That lets you join
 timing data against these accuracy results.
 
 The report keeps every row, including rows where nothing changed. If the
-yaml declares no variables, the report holds the line
+YAML file declares no variables, the report holds the line
 `No configurations compared for <benchmark>.` instead of a table.
 
 #### Scoring legend
 
 | Score | Condition |
 | --- | --- |
-| 🟢 | Improvement. The relative difference is negative, or a NaN or infinite baseline became finite. |
-| ⚪ | No change. The relative difference is zero, within `1e-14`. |
-| 🟡 | Regression of at most `1e-6`%. |
-| 🟠 | Regression of at most `1e-1`%. |
-| 🔴 | Regression larger than `1e-1`%, or an under-test distance that is NaN. |
+| `🟢` | Improvement. The relative difference is negative, or a NaN or infinite baseline became finite. |
+| `⚪` | No change. The relative difference is zero, within `1e-14`. |
+| `🟡` | Regression of at most `1e-6`%. |
+| `🟠` | Regression of at most `1e-1`%. |
+| `🔴` | Regression larger than `1e-1`%, or an under-test distance that is NaN. |
 
-Some edge cases are worth knowing.
+Note the following edge cases.
 
 - **A baseline distance of exactly zero** means the baseline matched the
   ground truth exactly. There is no scale to measure a relative change
-  against. If the under-test distance is also zero, the score is ⚪. If it
-  is non-zero, the relative difference is infinite and the score is 🔴. If
-  it is NaN, the score is 🔴.
-- **A NaN or infinite baseline that becomes finite** always scores 🟢.
+  against. If the under-test distance is also zero, the score is `⚪`. If it
+  is non-zero, the relative difference is infinite and the score is `🔴`. If
+  it is NaN, the score is `🔴`.
+- **A NaN or infinite baseline that becomes finite** always scores `🟢`.
   Going from unusable to measurable is an improvement at any size.
-- **Both distances NaN, or both infinite**, scores 🔴, even when the two
+- **Both distances NaN, or both infinite**, scores `🔴`, even when the two
   runs are identical. This can happen for `Scalar` variables whose ground
   truth is zero.
 
 ### Pairing configurations
 
 The tool sorts the baseline and under-test configurations by size, then by
-correlation tracking, then by configuration string to break ties. It then
+dependency tracking, then by configuration string to break ties. It then
 pairs them in order. The order the databases return rows in does not
-matter. Each pair must have the same size and correlation tracking. The
+matter. Each pair must have the same size and dependency tracking. The
 representation type may differ, since that is what the two type filters
-are for. For example, a baseline of `Athens-16` and `Atlas-32` pairs with
-an under-test of `Atlas-32` and `Jupiter-16` as `Athens-16` with
-`Jupiter-16` and `Atlas-32` with `Atlas-32`.
+are for. For example, a baseline of `Athens-16` and `Rome-32` pairs with
+an under-test of `Rome-32` and `Rome-16` as `Athens-16` with `Rome-16` and
+`Rome-32` with `Rome-32`. Athens and Rome never pair with Jupiter, Europa,
+or Mercury, because those only have `Advanced` dependency tracking.
 
 ### Troubleshooting
 
@@ -236,7 +256,7 @@ The tool exits with status 255 and writes no report in both of these cases.
 
 The two databases gave different numbers of matching configurations, so
 they cannot be paired. Usually one side is missing a run. Check that both
-databases contain the same sizes and correlation settings for the tables
+databases contain the same sizes and dependency tracking for the tables
 you named.
 
 #### `Cannot pair UxHw baseline Athens-64 with UxHw under-test Athens-32. Exiting.`
@@ -250,8 +270,8 @@ holds.
 
 The loaders raise `ValueError` when a variable is missing from a table, or
 when no configuration matches the filters. Check the variable names in the
-yaml and the filters on the command line. Databases from SDKs older than
-5.0 also fail this way, as described above.
+YAML file and the filters on the command line. Databases from SDK releases
+older than 5.0 also fail this way, as described above.
 
 ## `ks_convergence_gate`
 
@@ -266,7 +286,7 @@ Source is [ks_convergence_gate.py](ks_convergence_gate.py).
 ### How the gate works
 
 For every `Distribution` variable, the gate runs a bootstrapped
-Kolmogorov-Smirnov test on each database. It tests each correlation-tracking
+Kolmogorov-Smirnov test on each database. It tests each dependency tracking
 mode once, at the largest size the database holds. Whether a configuration
 converges depends on its largest size, so the smaller sizes are skipped.
 
@@ -277,29 +297,25 @@ converges depends on its largest size, so the smaller sizes are skipped.
   level, 0.05 by default.
 - The random generator is seeded, so the verdicts repeat from run to run.
 
-The level is fixed. A level that shrinks with size, such as 1/log2(N),
-rejects a perfect representation at size 2 every time and at size 32 one
-run in four.
+The level is fixed, because a level that shrinks with size, such as
+1/log2(N), rejects even a perfect representation at small sizes.
 
-The gate computes the statistic itself, where the library's bootstrapped
-test calls scipy. scipy's one-sample test compares the empirical CDF just
-before each sample point with the ground-truth CDF at the point. That is
-right for a continuous ground truth. On a ground truth with an atom, such as
-a payoff that is zero most of the time, it counts the atom's mass as a gap
-and fails even an exact representation. The gate compares against the
-ground-truth CDF's left limit there instead. On a continuous ground truth
-the two statistics agree.
+The gate computes the statistic itself instead of calling SciPy. At an atom
+in the ground truth, such as a payoff that is zero most of the time, the
+SciPy test fails even an exact representation. The gate compares against the
+left limit of the ground-truth CDF there. On a continuous ground truth, the
+two statistics agree.
 
 The decision for a configuration combines both sides.
 
 | Decision | When |
 | --- | --- |
-| ✅ measured | Both sides pass. |
-| ⚠️ measured | One side passes. The note says which. The row stays, since that difference is itself a regression or an improvement. |
-| ⛔ not measured | Neither side passes, or the ground truth cannot be tested. The rows of every size of the configuration are dropped. |
+| `✅ measured` | Both sides pass. |
+| `⚠️ measured` | One side passes. The note says which. The row stays, since that difference is itself a regression or an improvement. |
+| `⛔ not measured` | Neither side passes, or the ground truth cannot be tested. The rows of every size of the configuration are dropped. |
 
-An expression traced at several places gives several values with the same
-configuration. Each occurrence is decided and filtered on its own.
+An expression traced at more than one place gives more than one value with
+the same configuration. Each occurrence is decided and filtered on its own.
 
 Some configurations are never measured, whatever the test says.
 
@@ -318,27 +334,23 @@ distribution to test. They are never gated and always listed as measured.
 
 ### Running the gate
 
-Installing the package puts `ks_convergence_gate` on the path. It also runs
-as a module.
-
-```bash
-python -m signaloid_benchmarking.differential_accuracy.ks_convergence_gate --help
-```
-
-The gate takes the same database, filter and yaml options as
+The gate takes the same database, filter, and YAML options as
 `distance_uxhw_vs_mc`, so both tools can take the same argument list. This
 runs the comparison and then gates it.
 
 ```bash
+BASELINE=~/run-baseline/results
+UNDER_TEST=~/run-under-test/results
 ARGUMENTS=(
-    --ground-truth-database ground-truth.db
-    --uxhw-baseline-database old-build.db
-    --uxhw-under-test-database new-build.db
-    --uxhw-tables Evaluation
-    --baseline-uncertainty-representation-type Atlas
-    --under-test-uncertainty-representation-type Atlas
-    --uncertainty-representation-sizes 16 32 64
-    --yaml-signaloid signaloid.yaml
+    --ground-truth-database $BASELINE/*-ground-*.db
+    --ground-truth-table WeightedSamples
+    --uxhw-baseline-database $BASELINE/uxhwExecutionStatistics-*-tracing.db
+    --uxhw-under-test-database $UNDER_TEST/uxhwExecutionStatistics-*-tracing.db
+    --uxhw-tables TracingTable
+    --baseline-uncertainty-representation-type Athens
+    --under-test-uncertainty-representation-type Athens
+    --uncertainty-representation-sizes 16 32 64 128 256 512
+    --yaml-signaloid ~/my-application/signaloid.yaml
     --benchmark my-application
 )
 distance_uxhw_vs_mc "${ARGUMENTS[@]}" -o report.md
@@ -368,12 +380,12 @@ Besides the shared options, the gate takes these.
 
 | Column | Meaning |
 | --- | --- |
-| `Configuration` | Representation and correlation mode, such as `Athens-Disabled`. |
-| `Occurrence` | Which value this is when one expression name is traced at several places. It counts from 0, in the order `distance_uxhw_vs_mc` pairs them. |
+| `Configuration` | Representation and dependency tracking, such as `Athens-None` or `Jupiter-Advanced`. |
+| `Occurrence` | Which value this is when one expression name is traced at more than one place. It counts from 0, in the order `distance_uxhw_vs_mc` pairs them. |
 | `Size` | The largest size tested on each side. |
 | `Baseline` and `Under-test` | The verdict and combined p-value, or `n/a` when that side has no rows. |
 | `Decision` and `Note` | See the table above. |
 
 If every row of a report table is dropped, the filtered report holds a note
 in place of the table. Like `distance_uxhw_vs_mc`, the gate only understands
-the keywords that 5.0 and later SDKs write.
+the keywords that SDK 5.0 and later write.

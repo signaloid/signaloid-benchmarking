@@ -25,6 +25,11 @@ include = [
 enable = true
 vcs = "git"
 style = "pep440"
+# Add the commit hash to every version, e.g. 1.0.0+e8bf650. The internal and
+# public repositories tag the same versions, and pip keeps an installed copy
+# whose version matches the one requested. The hash makes them differ, so an
+# install always replaces an older copy built from another commit.
+metadata = true
 
 
 [tool.poetry.group.dev.dependencies]
@@ -49,20 +54,23 @@ python = ">=3.11,<4"
 # The Signaloid Data Toolkit (the `signaloid` package on PyPI) provides the Ux
 # Data parsing, distance metrics and plotting that the benchmarking tools build
 # on. `poetry lock` picks its newest 2.x release.
-signaloid = "^2.0.0"
+signaloid = "^2.0.2"
 numpy = [
 	{ version = ">=2.0.0", python = ">=3.11,<3.13" },
 	{ version = ">=2.1.0", python = ">=3.11,<3.14" },
 	{ version = ">=2.4.1", python = ">=3.11,<3.15" },
+	{ version = ">=2.5.2", python = ">=3.15" },
 ]
 matplotlib = [
 	{ version = ">=3.9.0", python = ">=3.11,<3.13" },
 	{ version = ">=3.10.0", python = ">=3.11,<3.14" },
 	{ version = ">=3.10.5", python = ">=3.11,<3.15" },
+	{ version = ">=3.11.2", python = ">=3.15" },
 ]
 pyyaml = ">=6.0.0"
 scipy = ">=1.14.0"
-pandas = "^2.0"
+# pandas 2 has no wheels for Python 3.15, so allow pandas 3 as well.
+pandas = ">=2.0,<4"
 tabulate = "^0.9.0"
 tqdm = "^4.66.2"
 

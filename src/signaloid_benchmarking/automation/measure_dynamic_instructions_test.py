@@ -29,7 +29,7 @@ from signaloid_benchmarking.automation.arguments import (
 )
 from signaloid_benchmarking.automation.build import export_timing_env
 from signaloid_benchmarking.config import (
-    Correlations,
+    DependencyTracking,
     RepresentationTypes,
     ReportingMethods,
 )
@@ -43,7 +43,7 @@ def _base_argv() -> list[str]:
         "-s",
         "16",
         "-c",
-        Correlations.DISABLED,
+        DependencyTracking.NONE,
         "-r",
         ReportingMethods.MEAN,
     ]

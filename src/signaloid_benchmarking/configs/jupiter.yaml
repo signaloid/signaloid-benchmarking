@@ -1,6 +1,6 @@
 # configs/jupiter.yaml — benchmarking_automation sweep, Jupiter only.
 # Pass with:
-#   benchmarking_automation --config configs/jupiter.yaml \
+#   signaloid-benchmarking --config src/signaloid_benchmarking/configs/jupiter.yaml \
 #       --path-to-application <demo>
 
 # Experiment matrix. Jupiter order is kept <= 32: the per-dimension
@@ -8,7 +8,7 @@
 # capped to match, since Jupiter representations blow up at higher orders.
 representation_types: [Jupiter]
 representation_sizes: [8, 16, 32]
-correlations: [Disabled, Autocorrelation]
+dependency_tracking: [Advanced]
 reporting_methods: [Mean, Quantile-95, Quantile-99]
 
 # Per-dimension Jupiter order cap. A larger Jupiter size is skipped, and
