@@ -30,6 +30,7 @@ bound (and that the per-call args are deliberately left unbound).
 import contextlib
 import functools
 import io
+import os
 import unittest
 from unittest.mock import patch
 
@@ -67,7 +68,7 @@ class TestBindTimingScript(unittest.TestCase):
                 "demo_cli_args": "--demo",
                 "representation_types": benchmark.representation_types,
                 "representation_sizes": benchmark.representation_sizes,
-                "correlations": benchmark.correlations,
+                "dependency_tracking_modes": benchmark.dependency_tracking_modes,
                 "logs_dir": benchmark.logs_dir,
                 "intermediate_timings_path": benchmark.intermediate_timings_path(),
             },
@@ -87,8 +88,8 @@ class TestBindTimingScript(unittest.TestCase):
 class TestResolveSkippedConfigurations(unittest.TestCase):
     """Each variable's configurations that cannot run, decided once."""
 
-    # The SDK lacks the Europa autocorrelation library in this fixture.
-    _NO_LIBRARY = "the UxHw SDK has no libuxhw_runtime_Europa_8_Autocorrelation.a"
+    # The SDK lacks the library for Rome with Basic in this fixture.
+    _NO_LIBRARY = "the UxHw SDK has no libuxhw_runtime_Atlas_8_Autocorrelation.a"
 
     def setUp(self) -> None:
         self.asked: list[tuple[str, int, str]] = []
@@ -97,10 +98,10 @@ class TestResolveSkippedConfigurations(unittest.TestCase):
             key = (
                 str(kwargs["representation_type"]),
                 int(str(kwargs["representation_size"])),
-                str(kwargs["correlation"]),
+                str(kwargs["dependency_tracking"]),
             )
             self.asked.append(key)
-            if key == ("Europa", 8, "Autocorrelation"):
+            if key == ("Rome", 8, "Basic"):
                 return self._NO_LIBRARY
 
             return None
@@ -114,9 +115,9 @@ class TestResolveSkippedConfigurations(unittest.TestCase):
 
         self.benchmark = Benchmark(
             path_to_application="/tmp/app",
-            representation_types=["Athens", "Europa"],
+            representation_types=["Athens", "Rome"],
             representation_sizes=[8],
-            correlations=["Disabled", "Autocorrelation"],
+            dependency_tracking_modes=["None", "Basic"],
         )
 
     def _resolve(self, *variables: BenchmarkingVariable) -> str:
@@ -137,22 +138,22 @@ class TestResolveSkippedConfigurations(unittest.TestCase):
         return printed.getvalue()
 
     def test_a_skipped_configuration_is_recorded_with_its_reason(self) -> None:
-        """Europa runs only without autocorrelation tracking."""
+        """Rome runs only without Basic dependency tracking."""
         variable = BenchmarkingVariable(name="a", description="a")
 
         self._resolve(variable)
 
         self.assertEqual(
             variable.skipped_configurations,
-            {"Europa-8-Autocorrelation": self._NO_LIBRARY},
+            {"Rome-8-Basic": self._NO_LIBRARY},
         )
         self.assertEqual(
             variable.benchmarked_configurations(
                 representation_types=self.benchmark.representation_types,
                 representation_sizes=self.benchmark.representation_sizes,
-                correlations=self.benchmark.correlations,
+                dependency_tracking_modes=self.benchmark.dependency_tracking_modes,
             ),
-            ["Athens-8", "Athens-8-Autocorrelation", "Europa-8"],
+            ["Athens-8", "Athens-8-Basic", "Rome-8"],
         )
 
     def test_each_skip_is_logged_once_with_the_variables_it_affects(
@@ -166,7 +167,7 @@ class TestResolveSkippedConfigurations(unittest.TestCase):
 
         self.assertEqual(
             printed.strip(),
-            f"Skipping Europa-8-Autocorrelation for a, b, because {self._NO_LIBRARY}.",
+            f"Skipping Rome-8-Basic for a, b, because {self._NO_LIBRARY}.",
         )
 
     def test_each_distinct_configuration_is_asked_about_once(self) -> None:
@@ -180,7 +181,7 @@ class TestResolveSkippedConfigurations(unittest.TestCase):
         self.assertEqual(len(set(self.asked)), 4)
 
     def test_a_variable_is_asked_about_its_own_matrix(self) -> None:
-        """A variable declaring only Athens is never asked about Europa."""
+        """A variable declaring only Athens is never asked about Rome."""
         variable = BenchmarkingVariable(
             name="a", description="a", representation_types=["Athens"]
         )
@@ -188,18 +189,19 @@ class TestResolveSkippedConfigurations(unittest.TestCase):
         self._resolve(variable)
 
         self.assertEqual(variable.skipped_configurations, {})
-        self.assertNotIn("Europa", {key[0] for key in self.asked})
+        self.assertNotIn("Rome", {key[0] for key in self.asked})
 
     def test_a_variable_with_nothing_left_to_run_stops_the_run(self) -> None:
         """
-        Europa with autocorrelation only would finish having measured
-        nothing, so it stops before any build, naming the variable and why.
+        Rome with Basic dependency tracking only would finish having
+        measured nothing, so it stops before any build, naming the variable
+        and why.
         """
         variable = BenchmarkingVariable(
             name="a",
             description="a",
-            representation_types=["Europa"],
-            correlations=["Autocorrelation"],
+            representation_types=["Rome"],
+            dependency_tracking_modes=["Basic"],
         )
 
         with self.assertRaises(ValueError) as caught:
@@ -207,8 +209,30 @@ class TestResolveSkippedConfigurations(unittest.TestCase):
 
         message = str(caught.exception)
         self.assertIn("'a'", message)
-        self.assertIn("Europa-8-Autocorrelation", message)
+        self.assertIn("Rome-8-Basic", message)
         self.assertIn(self._NO_LIBRARY, message)
+
+    def test_a_type_that_does_not_take_a_mode_is_skipped_unasked(self) -> None:
+        """Jupiter takes only Advanced, so the SDK is never asked about None."""
+        variable = BenchmarkingVariable(
+            name="a",
+            description="a",
+            representation_types=["Athens", "Jupiter"],
+            dependency_tracking_modes=["None", "Advanced"],
+        )
+
+        self._resolve(variable)
+
+        self.assertEqual(
+            variable.skipped_configurations,
+            {
+                "Athens-8-Advanced": "Athens has no Advanced dependency tracking",
+                "Jupiter-8": "Jupiter only has Advanced dependency tracking",
+            },
+        )
+        self.assertEqual(
+            sorted(self.asked), [("Athens", 8, "None"), ("Jupiter", 8, "Advanced")]
+        )
 
 
 class TestVariablesLeftAfterRunsDie(unittest.TestCase):
@@ -219,7 +243,7 @@ class TestVariablesLeftAfterRunsDie(unittest.TestCase):
             path_to_application="/tmp/app",
             representation_types=["Jupiter"],
             representation_sizes=[8, 16],
-            correlations=["Disabled"],
+            dependency_tracking_modes=["None"],
         )
         self.all_died = BenchmarkingVariable(name="a", description="a")
         self.all_died.skipped_configurations = {
@@ -295,6 +319,141 @@ class TestVariablesLeftAfterRunsDie(unittest.TestCase):
         )
 
 
+class TestResolveSdkRomeName(unittest.TestCase):
+    """An SDK from before the rename builds Rome as Atlas, and the run says Rome."""
+
+    def _resolve(
+        self,
+        *,
+        sdk_rome: str,
+        representation_types: list[str],
+        variable_types: list[str] | None = None,
+        run_uxhw_scce: bool = False,
+    ) -> tuple[Benchmark, BenchmarkingVariable, list[str], str]:
+        """
+        Resolve the SDK's name for Rome on a benchmark with one variable.
+
+        Args:
+            sdk_rome: What the SDK builds Rome as, ``Rome`` or ``Atlas``.
+            representation_types: The run-wide types, as from ``-u``.
+            variable_types: The variable's own types, or ``None``.
+            run_uxhw_scce: Whether the UxHw passes run on SCCE.
+
+        Returns:
+            The benchmark, its variable, the types the SDK was asked about,
+            and the name exported to the timing layer.
+        """
+        benchmark = Benchmark(
+            path_to_application="/tmp/app",
+            representation_types=representation_types,
+            run_uxhw_scce=run_uxhw_scce,
+        )
+        variable = BenchmarkingVariable(
+            name="a", description="a", representation_types=variable_types
+        )
+        benchmark.benchmarking_variables = [variable]
+        asked: list[str] = []
+
+        def sdk_representation_type(**kwargs: str) -> str:
+            asked.append(kwargs["representation_type"])
+            return sdk_rome
+
+        with (
+            patch(
+                "signaloid_benchmarking.automation.benchmark.sdk_representation_type",
+                side_effect=sdk_representation_type,
+            ),
+            patch.dict(os.environ),
+        ):
+            benchmark.resolve_sdk_rome_name()
+            exported = os.environ["SDK_ROME_REPRESENTATION_TYPE"]
+
+        return benchmark, variable, asked, exported
+
+    def test_older_sdk_builds_rome_as_atlas_and_the_run_says_rome(self) -> None:
+        benchmark, variable, asked, exported = self._resolve(
+            sdk_rome="Atlas",
+            representation_types=["Athens", "Rome"],
+            variable_types=["Rome"],
+        )
+
+        self.assertEqual(benchmark.representation_types, ["Athens", "Rome"])
+        self.assertEqual(variable.representation_types, ["Rome"])
+        self.assertEqual(benchmark.sdk_rome_name, "Atlas")
+        self.assertEqual(exported, "Atlas")
+        self.assertEqual(asked, ["Rome"])
+
+    def test_sdk_with_rome_keeps_rome(self) -> None:
+        benchmark, _, _, exported = self._resolve(
+            sdk_rome="Rome", representation_types=["Rome"]
+        )
+
+        self.assertEqual(benchmark.sdk_rome_name, "Rome")
+        self.assertEqual(exported, "Rome")
+
+    def test_without_rome_the_sdk_is_not_asked(self) -> None:
+        benchmark, _, asked, exported = self._resolve(
+            sdk_rome="Atlas", representation_types=["Athens"]
+        )
+
+        self.assertEqual(asked, [])
+        self.assertEqual(benchmark.sdk_rome_name, "Rome")
+        self.assertEqual(exported, "Rome")
+
+    def test_scce_does_not_ask(self) -> None:
+        benchmark, _, asked, _ = self._resolve(
+            sdk_rome="Atlas", representation_types=["Rome"], run_uxhw_scce=True
+        )
+
+        self.assertEqual(asked, [])
+        self.assertEqual(benchmark.sdk_rome_name, "Rome")
+
+    def test_the_library_check_asks_the_sdk_for_its_name(self) -> None:
+        benchmark = Benchmark(path_to_application="/tmp/app")
+        benchmark.sdk_rome_name = "Atlas"
+
+        with patch(
+            "signaloid_benchmarking.automation.benchmark.configuration_skip_reason",
+            return_value=None,
+        ) as check:
+            benchmark._configuration_skip_reason(
+                representation_type="Rome",
+                representation_size=8,
+                dependency_tracking="Basic",
+            )
+
+        self.assertEqual(check.call_args.kwargs["representation_type"], "Rome")
+        self.assertEqual(check.call_args.kwargs["sdk_representation_type"], "Atlas")
+
+
+class TestDependencyTrackingRules(unittest.TestCase):
+    """A type that does not take a dependency tracking mode is skipped."""
+
+    def test_advanced_types_take_advanced_only(self) -> None:
+        benchmark = Benchmark(path_to_application="/tmp/app")
+
+        with patch(
+            "signaloid_benchmarking.automation.benchmark.configuration_skip_reason",
+            return_value=None,
+        ):
+            for representation_type, mode, runs in (
+                ("Jupiter", "Advanced", True),
+                ("Jupiter", "None", False),
+                ("Europa", "Basic", False),
+                ("Mercury", "Advanced", True),
+                ("Athens", "Basic", True),
+                ("Athens", "Advanced", False),
+                ("Rome", "None", True),
+            ):
+                with self.subTest(type=representation_type, mode=mode):
+                    reason = benchmark._configuration_skip_reason(
+                        representation_type=representation_type,
+                        representation_size=8,
+                        dependency_tracking=mode,
+                    )
+                    self.assertEqual(reason is None, runs)
+
+
 if __name__ == "__main__":
     unittest.main()
 
@@ -311,7 +470,7 @@ class TestScceWithDynamicInstructions(unittest.TestCase):
                 measure_dynamic_instructions=True,
             )
 
-        self.assertIn("Warning! Intel PIN cannot instrument", printed.getvalue())
+        self.assertIn("Warning: Intel PIN cannot instrument", printed.getvalue())
 
     def test_scce_alone_does_not_warn(self) -> None:
         printed = io.StringIO()

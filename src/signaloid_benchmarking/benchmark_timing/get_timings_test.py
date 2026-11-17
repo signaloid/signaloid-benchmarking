@@ -123,7 +123,7 @@ def _skip_decisions(
     """Run should_skip_representation under the script's own shell options.
 
     Args:
-        configurations: (type, correlation, size) to ask about, in the
+        configurations: (type, dependency_tracking, size) to ask about, in the
             argument order the script's loops use.
         skipped: The SKIPPED_CONFIGURATIONS list, or None to leave it unset.
 
@@ -139,9 +139,9 @@ def _skip_decisions(
         script.append(
             "SKIPPED_CONFIGURATIONS=(" + " ".join(map(shlex.quote, skipped)) + ")"
         )
-    for representation_type, correlation, size in configurations:
+    for representation_type, dependency_tracking, size in configurations:
         script.append(
-            f"if should_skip_representation {representation_type} {correlation} "
+            f"if should_skip_representation {representation_type} {dependency_tracking} "
             f"{size}; then echo skip; else echo run; fi"
         )
     result = subprocess.run(
@@ -158,11 +158,11 @@ class TestShouldSkipRepresentation(unittest.TestCase):
     """The timing layer skips exactly what the Python side lists."""
 
     def test_a_listed_configuration_is_skipped(self) -> None:
-        """Europa with autocorrelation is skipped, Europa without runs."""
+        """Europa with Basic is skipped, Europa with None runs."""
         self.assertEqual(
             _skip_decisions(
-                [("Europa", "Autocorrelation", 8), ("Europa", "Disabled", 8)],
-                ["Europa-8-Autocorrelation"],
+                [("Europa", "Basic", 8), ("Europa", "None", 8)],
+                ["Europa-8-Basic"],
             ),
             ["skip", "run"],
         )
@@ -174,7 +174,7 @@ class TestShouldSkipRepresentation(unittest.TestCase):
         """
         self.assertEqual(
             _skip_decisions(
-                [("Jupiter", "Autocorrelation", 8), ("Jupiter", "Disabled", 512)],
+                [("Jupiter", "Basic", 8), ("Jupiter", "None", 512)],
                 [],
             ),
             ["run", "run"],
@@ -182,7 +182,7 @@ class TestShouldSkipRepresentation(unittest.TestCase):
 
     def test_an_unset_list_skips_nothing_under_set_u(self) -> None:
         """A standalone caller that defines no list does not abort."""
-        self.assertEqual(_skip_decisions([("Athens", "Disabled", 8)], None), ["run"])
+        self.assertEqual(_skip_decisions([("Athens", "None", 8)], None), ["run"])
 
 
 # A stand-in for a UxHw binary. It counts its own runs, and on the run its
@@ -405,7 +405,7 @@ class TestTimingRunThatDies(TimingLayerTestCase):
                     if real_timer
                     else "measure_process_time() { $1 >/dev/null || return $?; echo 1; }"
                 ),
-                "CORRELATION_TRACKING_TYPES=(Disabled)",
+                "DEPENDENCY_TRACKING_TYPES=(None)",
                 "REPRESENTATION_TYPES=(Athens)",
                 f"REPRESENTATION_SIZES=({sizes})",
                 f"PIN_ENABLED={int(pin)}",
@@ -499,7 +499,7 @@ class TestAbandonUxhwTestcase(TimingLayerTestCase):
     """Abandoning a configuration removes its traces and nothing else."""
 
     def test_another_configurations_count_files_are_kept(self) -> None:
-        """Athens-8 must not match Athens-8-Autocorrelation's files."""
+        """Athens-8 must not match Athens-8-Basic's files."""
         self.intermediate.write_text("kept\nkept\ncut\n")
 
         completed = _run_script(
@@ -507,7 +507,7 @@ class TestAbandonUxhwTestcase(TimingLayerTestCase):
                 _bash_function("warn"),
                 _bash_function("record_failed_configuration"),
                 _bash_function("abandon_uxhw_testcase"),
-                'for name in Athens-8-0 Athens-8-Autocorrelation-0; do touch "$LOGS_DIR/inscount-$name-$$.out"; done',
+                'for name in Athens-8-0 Athens-8-Basic-0; do touch "$LOGS_DIR/inscount-$name-$$.out"; done',
                 'abandon_uxhw_testcase Athens-8 "  2" "its timing run died"',
                 'ls "$LOGS_DIR"',
             ],
@@ -521,10 +521,7 @@ class TestAbandonUxhwTestcase(TimingLayerTestCase):
         self.assertEqual(len(remaining), 2, remaining)
         self.assertIn("failed-configurations.tsv", remaining)
         self.assertTrue(
-            any(
-                name.startswith("inscount-Athens-8-Autocorrelation-0-")
-                for name in remaining
-            ),
+            any(name.startswith("inscount-Athens-8-Basic-0-") for name in remaining),
             remaining,
         )
 
@@ -563,7 +560,7 @@ class TestTracingRunThatDies(TimingLayerTestCase):
                 _FAKE_UXHW_MAKE,
                 "log_section() { :; }",
                 "write_emulator_config() { :; }",
-                "CORRELATION_TRACKING_TYPES=(Disabled)",
+                "DEPENDENCY_TRACKING_TYPES=(None)",
                 "REPRESENTATION_TYPES=(Athens)",
                 "REPRESENTATION_SIZES=(4 8)",
                 "run_uxhw_tracing",
@@ -635,7 +632,7 @@ class TestTracingRunThatDies(TimingLayerTestCase):
 
         self.assertEqual(len(self.failures()), 2)
         self.assertEqual(self._calls("merge_tracing_dbs"), [])
-        self.assertIn("every tracing run died", completed.stderr)
+        self.assertIn("Every tracing run died", completed.stderr)
 
 
 if __name__ == "__main__":

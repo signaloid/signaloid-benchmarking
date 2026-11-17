@@ -18,6 +18,7 @@
 #   FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 #   DEALINGS IN THE SOFTWARE.
 
+import glob
 import os
 import shlex
 import subprocess
@@ -25,6 +26,7 @@ import sys
 
 from signaloid_benchmarking.types import BenchmarkingVariable
 from signaloid_benchmarking.config import (
+    DependencyTracking,
     EquivMC,
     RepresentationTypes,
     TimingFormat,
@@ -50,7 +52,7 @@ def runtime_library_path(
     path_to_uxhw_sdk: str,
     representation_type: str,
     representation_size: int,
-    correlation: str,
+    dependency_tracking: str,
 ) -> str:
     """
     Ask the build makefile which UxHw runtime library a configuration links.
@@ -64,9 +66,12 @@ def runtime_library_path(
             ``src`` directory, as the build does, so it reads the same
             ``config.mk``.
         path_to_uxhw_sdk: Path to the UxHw SDK.
-        representation_type: For example ``Europa``.
+        representation_type: As the SDK names it, for example ``Atlas``
+            for Rome on an SDK from before the rename. See
+            ``sdk_representation_type``.
         representation_size: For example ``8``.
-        correlation: ``Disabled`` or ``Autocorrelation``.
+        dependency_tracking: ``None``, ``Basic``, or ``Advanced``. The
+            SDK is asked with its earlier name.
 
     Returns:
         The absolute path of the library. It need not exist.
@@ -91,7 +96,8 @@ def runtime_library_path(
             f"PATH_TO_UXHW_SDK={path_to_uxhw_sdk}",
             f"REPRESENTATION_TYPE={representation_type}",
             f"REPRESENTATION_SIZE={representation_size}",
-            f"CORRELATION_TRACKING={correlation}",
+            # The SDK's own make variable, under its earlier name.
+            f"CORRELATION_TRACKING={DependencyTracking.to_sdk(dependency_tracking)}",
         ],
         input=_RUNTIME_LIBRARY_TARGET,
         cwd=os.path.join(path_to_application, "src"),
@@ -107,7 +113,7 @@ def runtime_library_path(
         configuration = configuration_string(
             representation_type=representation_type,
             representation_size=representation_size,
-            correlation=correlation,
+            dependency_tracking=dependency_tracking,
         )
         raise RuntimeError(
             "Could not ask the UxHw SDK which runtime library "
@@ -116,6 +122,68 @@ def runtime_library_path(
         )
 
     return lines[-1]
+
+
+def sdk_representation_type(
+    *,
+    representation_type: str,
+    path_to_application: str,
+    path_to_uxhw_sdk: str,
+) -> str:
+    """
+    Name a representation type the way the UxHw SDK builds it.
+
+    Rome is Atlas renamed. An SDK from before the rename ships no Rome
+    runtime library, and builds and records the same representation under
+    the Atlas name. Rome is looked for in the library directory the SDK
+    picks for this machine, as the build would look for it.
+
+    Args:
+        representation_type: For example ``Rome``.
+        path_to_application: Application root, whose ``config.mk`` can
+            change the library directory.
+        path_to_uxhw_sdk: Path to the UxHw SDK.
+
+    Returns:
+        ``Atlas`` for Rome when that directory has no Rome runtime
+        library. Otherwise ``representation_type`` unchanged.
+
+    Raises:
+        RuntimeError: If make cannot evaluate the build makefile, for
+            example because the SDK path is wrong.
+    """
+    if representation_type != RepresentationTypes.ROME:
+        return representation_type
+
+    # The directory depends on neither the size nor the dependency_tracking
+    # tracking, so any configuration names it.
+    library_directory = os.path.dirname(
+        runtime_library_path(
+            path_to_application=path_to_application,
+            path_to_uxhw_sdk=path_to_uxhw_sdk,
+            representation_type=representation_type,
+            representation_size=1,
+            dependency_tracking=DependencyTracking.NONE,
+        )
+    )
+    rome_library = next(
+        glob.iglob(
+            os.path.join(
+                library_directory, f"libuxhw_runtime_{RepresentationTypes.ROME}_*.a"
+            )
+        ),
+        None,
+    )
+    if rome_library is not None:
+        return representation_type
+
+    print(
+        f"The UxHw SDK has no Rome runtime library in {library_directory}, "
+        "so Rome is built under its earlier name, Atlas.",
+        file=sys.stderr,
+    )
+
+    return RepresentationTypes.ATLAS
 
 
 def jupiter_size_skip_reason(
@@ -152,8 +220,9 @@ def configuration_skip_reason(
     path_to_application: str,
     path_to_uxhw_sdk: str,
     representation_type: str,
+    sdk_representation_type: str,
     representation_size: int,
-    correlation: str,
+    dependency_tracking: str,
     max_jupiter_size: int,
 ) -> str | None:
     """
@@ -162,14 +231,17 @@ def configuration_skip_reason(
     Two things stop one. The SDK may ship no runtime library for it, as SDK
     6.6.0 ships none for Europa or Jupiter with autocorrelation tracking.
     And a Jupiter representation larger than ``--max-jupiter-size`` is
-    refused as a memory guard.
+    refused as a memory guard. Whether the type takes the dependency
+    tracking mode at all is ``DependencyTracking.skip_reason``.
 
     Args:
         path_to_application: Application root.
         path_to_uxhw_sdk: Path to the UxHw SDK.
-        representation_type: For example ``Europa``.
+        representation_type: For example ``Rome``.
+        sdk_representation_type: The same type as the SDK names it, for
+            example ``Atlas`` for Rome on an SDK from before the rename.
         representation_size: For example ``8``.
-        correlation: ``Disabled`` or ``Autocorrelation``.
+        dependency_tracking: ``None``, ``Basic``, or ``Advanced``.
         max_jupiter_size: The largest Jupiter size to benchmark.
 
     Returns:
@@ -189,9 +261,9 @@ def configuration_skip_reason(
     library = runtime_library_path(
         path_to_application=path_to_application,
         path_to_uxhw_sdk=path_to_uxhw_sdk,
-        representation_type=representation_type,
+        representation_type=sdk_representation_type,
         representation_size=representation_size,
-        correlation=correlation,
+        dependency_tracking=dependency_tracking,
     )
     if not os.path.isfile(library):
         return f"the UxHw SDK has no {os.path.basename(library)}"
@@ -279,7 +351,7 @@ def run_timing_script(
     demo_cli_args: str,
     representation_types: list[str],
     representation_sizes: list[int],
-    correlations: list[str],
+    dependency_tracking_modes: list[str],
     logs_dir: str,
     intermediate_timings_path: str,
     variable_index: int,
@@ -304,7 +376,7 @@ def run_timing_script(
         representation_types: Run-wide representation types. A
             per-variable pass uses the variable's own when it has them.
         representation_sizes: Run-wide representation sizes, likewise.
-        correlations: Run-wide correlation modes, likewise.
+        dependency_tracking_modes: Run-wide dependency tracking modes, likewise.
         logs_dir: Directory where the bash stderr log is written.
         intermediate_timings_path: Absolute path of the transient
             intermediate timings file the bash script writes.
@@ -363,18 +435,18 @@ def run_timing_script(
     (
         representation_types,
         representation_sizes,
-        correlations,
+        dependency_tracking_modes,
     ) = variable.representation_matrix(
         representation_types=representation_types,
         representation_sizes=representation_sizes,
-        correlations=correlations,
+        dependency_tracking_modes=dependency_tracking_modes,
     )
     skipped_configurations = variable.skipped_configurations
 
     # Build bash arrays (cannot be env vars) and source the script
     representations = " ".join(map(str, representation_types))
     rep_sizes = " ".join(map(str, representation_sizes))
-    correlations_str = " ".join(map(str, correlations))
+    dependency_tracking_str = " ".join(map(str, dependency_tracking_modes))
     skipped_str = " ".join(map(shlex.quote, skipped_configurations))
 
     traces_lines = (
@@ -393,7 +465,7 @@ TRACES=(
 REFERENCE_PRECISIONS=({native_mc_sizes})
 REPRESENTATION_TYPES=({representations})
 REPRESENTATION_SIZES=({rep_sizes})
-CORRELATION_TRACKING_TYPES=({correlations_str})
+DEPENDENCY_TRACKING_TYPES=({dependency_tracking_str})
 SKIPPED_CONFIGURATIONS=({skipped_str})
 . {quoted_timing_script}
 """
@@ -425,7 +497,7 @@ SKIPPED_CONFIGURATIONS=({skipped_str})
             failed_configurations_path=failed_configurations_path,
             representation_types=representation_types,
             representation_sizes=representation_sizes,
-            correlations=correlations,
+            dependency_tracking_modes=dependency_tracking_modes,
         )
 
 
@@ -435,7 +507,7 @@ def skip_failed_configurations(
     failed_configurations_path: str,
     representation_types: list[str],
     representation_sizes: list[int],
-    correlations: list[str],
+    dependency_tracking_modes: list[str],
 ) -> None:
     """
     Skip the configurations whose UxHw run died in the last pass.
@@ -452,7 +524,7 @@ def skip_failed_configurations(
         representation_types: Run-wide types, for a variable that
             declares none of its own.
         representation_sizes: Run-wide sizes, likewise.
-        correlations: Run-wide correlation modes, likewise.
+        dependency_tracking_modes: Run-wide dependency tracking modes, likewise.
     """
     if not os.path.isfile(failed_configurations_path):
         return
@@ -469,7 +541,7 @@ def skip_failed_configurations(
     if not variable.benchmarked_configurations(
         representation_types=representation_types,
         representation_sizes=representation_sizes,
-        correlations=correlations,
+        dependency_tracking_modes=dependency_tracking_modes,
     ):
         print(
             f"Every configuration of {variable.name} is skipped, so nothing "
@@ -539,7 +611,10 @@ def compile_native(
             # SOURCES, hence no native MC). A non-zero return (e.g. missing
             # config.mk) also yields empty stdout and must not be read as unset.
             if result.returncode != 0:
-                raise RuntimeError(f"make failed: {result.stderr}")
+                raise RuntimeError(
+                    f"Could not read {var} from {config_path}. make exited "
+                    f"with code {result.returncode}.\n{result.stderr.strip()}"
+                )
             return result.stdout.strip()
 
         sources_str = _make_expand("SOURCES")
@@ -599,7 +674,7 @@ def compile_native(
         f'b="$(basename "$f")"; '
         f'if [ "$b" = "{EquivMC.MC_OUTPUT_FILENAME}" ]; then continue; fi; '
         f'if [ -e "$b" ] && [ ! -L "$b" ]; then '
-        f'echo "WARNING: skipping symlink for $b (file already exists in application root)"; '
+        f'echo "Warning: Not linking inputs/$b, because $b is already a file in the application root."; '
         f"continue; fi; "
         f'ln -sf "$f" .; done',
         shell=True,

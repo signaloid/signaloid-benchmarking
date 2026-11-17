@@ -93,7 +93,7 @@ class TestReadDbMetrics(unittest.TestCase):
         """Requesting an unrecognised metric raises ``KeyError``."""
         db = str(self.tmp_path / "test.db")
         _make_db(db)
-        with self.assertRaisesRegex(KeyError, "unknown metric"):
+        with self.assertRaisesRegex(KeyError, "Unknown metric"):
             read_db_metric(db, "not-a-real-metric")
 
     def test_main_host_wallclock_prints_value(self) -> None:

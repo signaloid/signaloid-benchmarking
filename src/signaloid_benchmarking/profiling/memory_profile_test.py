@@ -18,12 +18,20 @@
 #   FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 #   DEALINGS IN THE SOFTWARE.
 
+import contextlib
+import io
 import math
+import os
+import sys
+import tempfile
 import unittest
 from typing import Callable
+from unittest import mock
+
+from signaloid_benchmarking.profiling import memory_profile
 
 from signaloid_benchmarking.config import (
-    Correlations,
+    DependencyTracking,
     RepresentationTypes,
     configuration_string,
 )
@@ -256,18 +264,18 @@ class TestSearchPeakElements(unittest.TestCase):
 class TestConfigurationString(unittest.TestCase):
     """Configurations are named as the benchmarking tool names them."""
 
-    def test_disabled_correlation_is_left_out(self) -> None:
+    def test_no_dependency_tracking_is_left_out(self) -> None:
         """Matches uxhw_config_string, which omits the default."""
         self.assertEqual(
             configuration_string(
-                representation_type=RepresentationTypes.JUPITER,
+                representation_type=RepresentationTypes.ATHENS,
                 representation_size=8,
-                correlation=Correlations.DISABLED,
+                dependency_tracking=DependencyTracking.NONE,
             ),
-            "Jupiter-8",
+            "Athens-8",
         )
 
-    def test_autocorrelation_is_named(self) -> None:
+    def test_dependency_tracking_is_named(self) -> None:
         """
         The suffix is what lets a profile be lined up against a
         benchmarking result for the same configuration.
@@ -276,10 +284,71 @@ class TestConfigurationString(unittest.TestCase):
             configuration_string(
                 representation_type=RepresentationTypes.ATHENS,
                 representation_size=16,
-                correlation=Correlations.AUTOCORRELATION,
+                dependency_tracking=DependencyTracking.BASIC,
             ),
-            "Athens-16-Autocorrelation",
+            "Athens-16-Basic",
         )
+
+
+class TestMainDependencyTracking(unittest.TestCase):
+    """The profiler gives each type the dependency tracking it means."""
+
+    def _profiled_mode(self, *arguments: str) -> str:
+        """
+        Run main with the profiling itself stubbed out.
+
+        Args:
+            *arguments: Command-line arguments after the required ones.
+
+        Returns:
+            The dependency tracking that main asked to profile.
+        """
+        with tempfile.TemporaryDirectory() as application:
+            os.mkdir(os.path.join(application, "src"))
+            argv = [
+                "signaloid-memory-profile",
+                "--path-to-application",
+                application,
+                "--path-to-uxhw-sdk",
+                "/sdk",
+                "--representation-size",
+                "4",
+                *arguments,
+            ]
+            with mock.patch.object(sys, "argv", argv), mock.patch.object(
+                memory_profile,
+                "sdk_representation_type",
+                side_effect=lambda **kwargs: kwargs["representation_type"],
+            ), mock.patch.object(
+                memory_profile, "profile_configuration", return_value={}
+            ) as profile, contextlib.redirect_stdout(
+                io.StringIO()
+            ):
+                memory_profile.main()
+
+        return str(profile.call_args.kwargs["dependency_tracking"])
+
+    def test_disabled_means_advanced_for_an_advanced_type(self) -> None:
+        self.assertEqual(
+            self._profiled_mode(
+                "--representation-type", "Jupiter", "--correlation", "Disabled"
+            ),
+            "Advanced",
+        )
+
+    def test_disabled_means_none_otherwise(self) -> None:
+        self.assertEqual(
+            self._profiled_mode(
+                "--representation-type", "Athens", "--correlation", "Disabled"
+            ),
+            "None",
+        )
+
+    def test_the_default_follows_the_type(self) -> None:
+        self.assertEqual(
+            self._profiled_mode("--representation-type", "Europa"), "Advanced"
+        )
+        self.assertEqual(self._profiled_mode("--representation-type", "Rome"), "None")
 
 
 if __name__ == "__main__":

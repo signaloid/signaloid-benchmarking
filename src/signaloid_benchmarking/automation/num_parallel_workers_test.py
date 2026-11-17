@@ -135,21 +135,22 @@ class TestNumParallelWorkers(unittest.TestCase):
         with redirect_stdout(buf):
             _detect_with(benchmark, n_cpus=32)
         self.assertIn(
-            "Requested 64 parallel workers but only 32 detected", buf.getvalue()
+            "64 parallel workers were asked for, but this machine has 32 CPUs",
+            buf.getvalue(),
         )
 
         buf2: io.StringIO = io.StringIO()
         benchmark = _make_benchmark(8)
         with redirect_stdout(buf2):
             _detect_with(benchmark, n_cpus=32)
-        self.assertNotIn("parallel workers but only", buf2.getvalue())
+        self.assertNotIn("parallel workers were asked for", buf2.getvalue())
 
         # Unset (resolved to detected cores) must never warn.
         buf3: io.StringIO = io.StringIO()
         benchmark = _make_benchmark(None)
         with redirect_stdout(buf3):
             _detect_with(benchmark, n_cpus=32)
-        self.assertNotIn("parallel workers but only", buf3.getvalue())
+        self.assertNotIn("parallel workers were asked for", buf3.getvalue())
 
     def test_num_parallel_workers_resolved_and_clamped(self) -> None:
         """After ``get_machine_info``, ``num_parallel_workers`` is the single

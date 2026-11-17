@@ -24,7 +24,7 @@ from argparse import Namespace
 
 from signaloid_benchmarking.automation.arguments import validate_args
 from signaloid_benchmarking.config import (
-    Correlations,
+    DependencyTracking,
     DistanceMetrics,
     ReportingMethods,
     RepresentationTypes,
@@ -43,7 +43,7 @@ class TestValidateArgs(unittest.TestCase):
         args = Namespace(
             representation_types=[RepresentationTypes.ATHENS],
             representation_sizes=[16],
-            correlations=[Correlations.DISABLED],
+            dependency_tracking=[DependencyTracking.NONE],
             reporting_methods=[ReportingMethods.MEAN],
             has_analytic_ground_truth=True,
             ground_truth_type=RepresentationTypes.MONTE_CARLO,
@@ -61,7 +61,7 @@ class TestValidateArgs(unittest.TestCase):
         args = Namespace(
             representation_types=[RepresentationTypes.ATHENS],
             representation_sizes=[16],
-            correlations=[Correlations.DISABLED],
+            dependency_tracking=[DependencyTracking.NONE],
             reporting_methods=[ReportingMethods.MEAN],
             has_analytic_ground_truth=False,
             ground_truth_type=RepresentationTypes.MONTE_CARLO,
@@ -79,7 +79,7 @@ class TestValidateArgs(unittest.TestCase):
         args = Namespace(
             representation_types=[RepresentationTypes.ATHENS],
             representation_sizes=[16],
-            correlations=[Correlations.DISABLED],
+            dependency_tracking=[DependencyTracking.NONE],
             reporting_methods=[ReportingMethods.MEAN],
             has_analytic_ground_truth=False,
             ground_truth_type=RepresentationTypes.MONTE_CARLO,
@@ -97,7 +97,7 @@ class TestValidateArgs(unittest.TestCase):
         args = Namespace(
             representation_types=[RepresentationTypes.ATHENS],
             representation_sizes=[True],
-            correlations=[Correlations.DISABLED],
+            dependency_tracking=[DependencyTracking.NONE],
             reporting_methods=[ReportingMethods.MEAN],
             has_analytic_ground_truth=False,
             ground_truth_type=RepresentationTypes.MONTE_CARLO,

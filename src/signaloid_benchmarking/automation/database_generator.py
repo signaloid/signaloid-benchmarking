@@ -73,7 +73,11 @@ def _weighted_sample_rows(variable: BenchmarkingVariable) -> list[tuple[Any, ...
             for mc_count, value_list in samples.scalar_output_dict.items()
             for value in value_list
         ]
-    print(f"Warning! variable type {variable.type} not supported")
+    print(
+        f"Warning: {variable.name} has the type {variable.type!r}, which is not "
+        f"{VariableTypes.DISTRIBUTION!r} or {VariableTypes.SCALAR!r}. No rows "
+        "are written for it."
+    )
     return []
 
 
@@ -97,7 +101,11 @@ def _mc_sample_rows(variable: BenchmarkingVariable) -> list[tuple[Any, ...]]:
             for mc_count, value_list in samples.scalar_output_dict.items()
             for adversary_index, value in enumerate(value_list)
         ]
-    print(f"Warning! variable type {variable.type} not supported")
+    print(
+        f"Warning: {variable.name} has the type {variable.type!r}, which is not "
+        f"{VariableTypes.DISTRIBUTION!r} or {VariableTypes.SCALAR!r}. No rows "
+        "are written for it."
+    )
     return []
 
 

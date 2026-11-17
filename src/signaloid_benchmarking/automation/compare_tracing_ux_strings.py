@@ -51,7 +51,7 @@ import sys
 
 # A printed uncertain value renders as `Ux` followed by the hex encoding of its
 # representation. The leading type byte varies by representation (Athens,
-# Atlas, ...), so the pattern must not pin it to a particular value.
+# Rome, ...), so the pattern must not pin it to a particular value.
 _UX_STRING_PATTERN = re.compile(r"Ux[0-9A-Fa-f]+")
 
 # Cap on how much of a differing Ux string to print. A single Athens-16 value
@@ -158,7 +158,7 @@ def _report(
 
     if result.is_empty:
         print(
-            f"WARNING: ux-string check{scope}: neither the {baseline_label} "
+            f"Warning: In the ux-string check{scope}, neither the {baseline_label} "
             f"nor the {candidate_label} build printed any Ux string, so "
             f"nothing was verified. Check that the application prints its "
             f"uncertain values."
@@ -174,7 +174,7 @@ def _report(
         return
 
     print(
-        f"WARNING: ux-string check{scope}: {baseline_label} and "
+        f"Warning: In the ux-string check{scope}, the {baseline_label} and "
         f"{candidate_label} builds printed different Ux strings "
         f"({result.matched} identical, {len(result.mismatches)} differing, "
         f"{result.baseline_count} printed by {baseline_label}, "
@@ -231,8 +231,8 @@ def main() -> int:
         result = compare_ux_strings(args.baseline_stdout, args.candidate_stdout)
     except OSError as exc:
         print(
-            f"WARNING: ux-string check could not compare "
-            f"{args.baseline_stdout} and {args.candidate_stdout}: {exc}",
+            f"Warning: The ux-string check could not compare "
+            f"{args.baseline_stdout} and {args.candidate_stdout}. {exc}",
             file=sys.stderr,
         )
         return 2

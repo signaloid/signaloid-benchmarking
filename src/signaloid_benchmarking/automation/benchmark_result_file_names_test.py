@@ -66,6 +66,12 @@ def _load(directory: Path, descriptions: list[str]) -> Benchmark:
         yaml.safe_dump(signaloid_yaml, sort_keys=False),
         encoding="utf-8",
     )
+    # LineNumber 50 must declare the traced array.
+    (directory / "src").mkdir(exist_ok=True)
+    (directory / "src" / "main.c").write_text(
+        "\n" * 49 + "double outputVariables[8];\n",
+        encoding="utf-8",
+    )
     benchmark = Benchmark(path_to_application=str(directory))
     benchmark.load_yaml()
 

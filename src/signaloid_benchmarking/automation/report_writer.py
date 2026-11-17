@@ -365,7 +365,7 @@ def _find_label_row(*, column_a: list[str], label: str) -> int:
             return index + 1
     raise ValueError(
         f"Metadata sheet '{ReportSheetTabs.ASSUMPTIONS_CONFIG}' has no column-A "
-        f"row containing {label!r}; the report template layout changed. "
+        f"row containing {label!r}. The report template layout has changed. "
         f"Update MetadataRowLabels to match it."
     )
 
@@ -477,7 +477,8 @@ def row_emcc_count(row: pd.Series) -> int:
             raw_value.decode() if isinstance(raw_value, bytes) else str(raw_value)
         )
         raise TypeError(
-            f"Expected float or int. {error_value} is of type " f"{type(raw_value)}"
+            "The EMCC cell should hold a number, but it holds "
+            f"{error_value!r} of type {type(raw_value).__name__}."
         )
 
     return int(raw_value)
@@ -743,7 +744,7 @@ def upload_and_link_images_to_sheet(
             link_rows.append([link_formula])
 
         except Exception as e:
-            print(f"Error processing image {file_name}: {e}")
+            print(f"Warning: Could not add the image {file_name} to the report. {e}")
 
     if link_rows:
         sheets_service.spreadsheets().values().update(

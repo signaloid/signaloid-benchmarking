@@ -71,9 +71,9 @@ class TestRunTimingScriptMatrix(unittest.TestCase):
         )
         declaring.representation_types = ["Athens"]
         declaring.representation_sizes = [8, 16]
-        declaring.correlations = ["Autocorrelation"]
+        declaring.dependency_tracking_modes = ["Basic"]
         declaring.skipped_configurations = {
-            "Athens-16-Autocorrelation": "the UxHw SDK has no library for it"
+            "Athens-16-Basic": "the UxHw SDK has no library for it"
         }
         inheriting = BenchmarkingVariable(
             name="outputVariables[1]", description="second", cla="-S 1"
@@ -95,7 +95,7 @@ class TestRunTimingScriptMatrix(unittest.TestCase):
             demo_cli_args="",
             representation_types=["Jupiter"],
             representation_sizes=[32, 64],
-            correlations=["Disabled"],
+            dependency_tracking_modes=["None"],
             logs_dir=self.logs_dir,
             intermediate_timings_path=os.path.join(self.logs_dir, "timings"),
             timing=True,
@@ -112,7 +112,7 @@ class TestRunTimingScriptMatrix(unittest.TestCase):
 
         self.assertIn("REPRESENTATION_TYPES=(Athens)", command)
         self.assertIn("REPRESENTATION_SIZES=(8 16)", command)
-        self.assertIn("CORRELATION_TRACKING_TYPES=(Autocorrelation)", command)
+        self.assertIn("DEPENDENCY_TRACKING_TYPES=(Basic)", command)
 
     def test_an_inheriting_variable_sweeps_the_run_wide_matrix(self) -> None:
         """A variable that declares nothing is timed as before."""
@@ -120,13 +120,11 @@ class TestRunTimingScriptMatrix(unittest.TestCase):
 
         self.assertIn("REPRESENTATION_TYPES=(Jupiter)", command)
         self.assertIn("REPRESENTATION_SIZES=(32 64)", command)
-        self.assertIn("CORRELATION_TRACKING_TYPES=(Disabled)", command)
+        self.assertIn("DEPENDENCY_TRACKING_TYPES=(None)", command)
 
     def test_bash_is_handed_the_variables_skipped_configurations(self) -> None:
         """The timing layer skips what Python decided, and nothing else."""
-        self.assertIn(
-            "SKIPPED_CONFIGURATIONS=(Athens-16-Autocorrelation)", self._bash_command(0)
-        )
+        self.assertIn("SKIPPED_CONFIGURATIONS=(Athens-16-Basic)", self._bash_command(0))
 
     def test_a_variable_with_no_skips_hands_bash_an_empty_list(self) -> None:
         """An empty list, so bash's set -u never sees the array unset."""
@@ -194,7 +192,7 @@ class TestRunTimingScriptFailedConfigurations(unittest.TestCase):
                 demo_cli_args="",
                 representation_types=["Jupiter"],
                 representation_sizes=[16, 32, 64],
-                correlations=["Disabled"],
+                dependency_tracking_modes=["None"],
                 logs_dir=self.logs_dir,
                 intermediate_timings_path=os.path.join(self.logs_dir, "timings"),
                 variable_index=0,
@@ -221,7 +219,7 @@ class TestRunTimingScriptFailedConfigurations(unittest.TestCase):
             self.variable.benchmarked_configurations(
                 representation_types=["Jupiter"],
                 representation_sizes=[16, 32, 64],
-                correlations=["Disabled"],
+                dependency_tracking_modes=["None"],
             ),
             ["Jupiter-16"],
         )

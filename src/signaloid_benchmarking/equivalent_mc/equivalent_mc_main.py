@@ -73,7 +73,7 @@ class LoadDataComputeEquivalentMCArgs(TypedDict):
     uxhw_table_names: list[str]
     uxhw_ur_types: list[str]
     uxhw_ur_sizes: list[int]
-    correlations: list[str]
+    dependency_tracking_modes: list[str]
     distance_type: str
     n_processes: int
     n_adversaries: int
@@ -101,9 +101,9 @@ def _print_uxhw_table(uxhw: list[TaggedDistributionalValue]) -> None:
     Args:
         uxhw: The loaded UxHw configurations to tabulate.
     """
-    table_data = [["UR_type", "UR_order", "Correlation Tracking", "Mean", "Variance"]]
+    table_data = [["UR_type", "UR_order", "Dependency Tracking", "Mean", "Variance"]]
     alignments = ["left", "right", "left", "left", "left"]
-    # representation_type / correlation_tracking come from the carrier metadata
+    # representation_type / dependency_tracking come from the carrier metadata
     # (never off a Distribution). Numeric stats come from the carried dv.
     for uxhw_conf in uxhw:
         # The dv is freshly re-loaded here (it does not carry the Step-6
@@ -120,7 +120,7 @@ def _print_uxhw_table(uxhw: list[TaggedDistributionalValue]) -> None:
             [
                 str(uxhw_conf.representation_type),
                 str(uxhw_conf.dv.UR_order),
-                str(uxhw_conf.correlation_tracking),
+                str(uxhw_conf.dependency_tracking),
                 mean_cell,
                 variance_cell,
             ]
@@ -182,10 +182,10 @@ def _generate_distribution_plots(
         )
 
     # The per-config filename embeds the carrier's config string (its repr,
-    # e.g. "Athens-16" or "Athens-16-Autocorrelation") so it matches exactly
+    # e.g. "Athens-16" or "Athens-16-Basic") so it matches exactly
     # what report_writer reconstructs from the results table.
     for dist in uxhw_from_table:
-        assert dist.correlation_tracking is not None
+        assert dist.dependency_tracking is not None
         plot_name = _resolve_plot_path(
             f"{variable.formatted_description}-{dist}.png",
             plots_dir,
@@ -198,7 +198,7 @@ def _generate_distribution_plots(
                 xlim=xlim,
             )
         except Exception as e:
-            print(f"Failed to generate plot {plot_name} with error: {e}")
+            print(f"Warning: Could not draw the plot {plot_name}. {e}")
 
 
 def load_data_and_compute_equivalent_mc(args: LoadDataComputeEquivalentMCArgs) -> None:
@@ -253,7 +253,7 @@ def load_data_and_compute_equivalent_mc(args: LoadDataComputeEquivalentMCArgs) -
         variable_types, variable_sizes, _ = variable.representation_matrix(
             representation_types=args["uxhw_ur_types"],
             representation_sizes=args["uxhw_ur_sizes"],
-            correlations=args["correlations"],
+            dependency_tracking_modes=args["dependency_tracking_modes"],
         )
         uxhw = _load_uxhw_distributions(
             db_path=args["uxhw_database_path"],

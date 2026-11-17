@@ -258,13 +258,12 @@ class TestGetBestSpeedupInfo(unittest.TestCase):
         self.assertEqual(best_config, "Athens-32")
         self.assertEqual(best_emcc, 256)
 
-    def test_get_best_speedup_info_preserves_correlation_prefix(self) -> None:
+    def test_get_best_speedup_info_returns_the_configuration_verbatim(self) -> None:
         """
-        ``best_config`` is returned verbatim from the results table, full
-        ``CORRELATION_`` token included. The per-config plot on disk uses the
-        short token (``...-Athens-16-OFF.png``). Building the plot path is the
-        job of ``_get_triptych_image_names``, not of ``_get_best_speedup_info``,
-        which must report the configuration exactly as the results show it.
+        ``best_config`` is returned verbatim from the results table. Building
+        the plot path is the job of ``_get_triptych_image_names``, not of
+        ``_get_best_speedup_info``, which must report the configuration
+        exactly as the results show it.
         """
         df = _make_speedup_df(
             [
@@ -414,9 +413,9 @@ class TestTriptychImageNames(unittest.TestCase):
             ],
         )
 
-    def test_triptych_per_config_uses_canonical_correlation_token(self) -> None:
-        """A Disabled best_config (suffix omitted) yields the on-disk
-        ...-Jupiter-16.png name."""
+    def test_triptych_per_config_uses_the_configuration_string(self) -> None:
+        """A configuration with no dependency tracking (no suffix) yields the
+        on-disk ...-Athens-16.png name."""
         variable = BenchmarkingVariable(
             name="gg -> gg cross-section (pb)",
             description="gg -> gg cross-section (pb)",
@@ -425,7 +424,7 @@ class TestTriptychImageNames(unittest.TestCase):
         plots_dir = str(self.tmp_path)
         names = _get_triptych_image_names(
             variable=variable,
-            best_config="Jupiter-16",
+            best_config="Athens-16",
             best_emcc=10,
             plots_dir=plots_dir,
         )
@@ -434,7 +433,7 @@ class TestTriptychImageNames(unittest.TestCase):
             names,
             [
                 os.path.join(plots_dir, f"{formatted}-adversary-10.png"),
-                os.path.join(plots_dir, f"{formatted}-Jupiter-16.png"),
+                os.path.join(plots_dir, f"{formatted}-Athens-16.png"),
                 os.path.join(plots_dir, f"{formatted}-ground-truth.png"),
             ],
         )

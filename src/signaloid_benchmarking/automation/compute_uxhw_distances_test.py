@@ -65,7 +65,7 @@ class TestComputeUxhwDistancesPerVariable(unittest.TestCase):
             tracing_db_path="tracing.db",
             representation_types=["Jupiter"],
             representation_sizes=[32, 64],
-            correlations=["Disabled"],
+            dependency_tracking_modes=["None"],
             uxhw_distance_file="uxhw-distances.csv",
         )
 

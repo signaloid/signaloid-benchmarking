@@ -39,7 +39,7 @@ from signaloid_benchmarking.config import RepresentationTypes
 
 RUN_WIDE_TYPES = ["Jupiter"]
 RUN_WIDE_SIZES = [32, 64]
-RUN_WIDE_CORRELATIONS = ["Disabled"]
+RUN_WIDE_DEPENDENCY_TRACKING_MODES = ["None"]
 
 # Both outputs of the benchmarking template. The first declares every
 # per-variable key, as the template does, and the second declares none.
@@ -84,6 +84,12 @@ def _write_application(directory: Path, entries: list[dict[str, Any]]) -> None:
         yaml.safe_dump(signaloid_yaml, sort_keys=False),
         encoding="utf-8",
     )
+    # LineNumber 50 must declare the traced array.
+    (directory / "src").mkdir(exist_ok=True)
+    (directory / "src" / "main.c").write_text(
+        "\n" * 49 + "double outputVariables[8];\n",
+        encoding="utf-8",
+    )
     (directory / "ground-truth.py").write_text("", encoding="utf-8")
 
 
@@ -110,7 +116,7 @@ class TestLoadYamlPerVariableKeys(unittest.TestCase):
             path_to_application=str(self.application),
             representation_types=list(RUN_WIDE_TYPES),
             representation_sizes=list(RUN_WIDE_SIZES),
-            correlations=list(RUN_WIDE_CORRELATIONS),
+            dependency_tracking_modes=list(RUN_WIDE_DEPENDENCY_TRACKING_MODES),
         )
         benchmark.load_yaml()
 
@@ -125,12 +131,12 @@ class TestLoadYamlPerVariableKeys(unittest.TestCase):
             index: The variable's position.
 
         Returns:
-            The variable's types, sizes and correlation modes.
+            The variable's types, sizes and dependency tracking modes.
         """
         return benchmark.benchmarking_variables[index].representation_matrix(
             representation_types=benchmark.representation_types,
             representation_sizes=benchmark.representation_sizes,
-            correlations=benchmark.correlations,
+            dependency_tracking_modes=benchmark.dependency_tracking_modes,
         )
 
     def test_declared_keys_replace_the_run_wide_flags(self) -> None:
@@ -139,7 +145,36 @@ class TestLoadYamlPerVariableKeys(unittest.TestCase):
 
         self.assertEqual(
             self._matrix(benchmark, 0),
-            (["Athens"], [8, 16, 32, 64, 128], ["Autocorrelation"]),
+            (["Athens"], [8, 16, 32, 64, 128], ["Basic"]),
+        )
+
+    def test_disabled_keeps_its_meaning_for_the_variables_types(self) -> None:
+        """
+        Disabled means Advanced for a variable measured on Jupiter, whether
+        its own entry or the run names Jupiter.
+        """
+        own_types = dict(DECLARING_ENTRY)
+        own_types["RepresentationTypes"] = ["Jupiter"]
+        own_types["CorrelationTracking"] = ["Disabled"]
+        run_wide_types: dict[str, Any] = dict(SILENT_ENTRY)
+        run_wide_types["CorrelationTracking"] = ["Disabled"]
+        benchmark = self._load([own_types, run_wide_types])
+
+        self.assertEqual(self._matrix(benchmark, 0)[2], ["Advanced"])
+        self.assertEqual(RUN_WIDE_TYPES, ["Jupiter"])
+        self.assertEqual(self._matrix(benchmark, 1)[2], ["Advanced"])
+
+    def test_dependency_tracking_is_read_under_its_current_name(self) -> None:
+        """DependencyTracking is the current key, CorrelationTracking the earlier."""
+        entry = dict(DECLARING_ENTRY)
+        del entry["CorrelationTracking"]
+        entry["DependencyTracking"] = ["None", "Basic"]
+        entry["RepresentationTypes"] = ["Atlas"]
+        benchmark = self._load([entry, SILENT_ENTRY])
+
+        self.assertEqual(
+            self._matrix(benchmark, 0),
+            (["Rome"], [8, 16, 32, 64, 128], ["None", "Basic"]),
         )
 
     def test_absent_keys_leave_the_run_wide_flags_in_force(self) -> None:
@@ -149,11 +184,11 @@ class TestLoadYamlPerVariableKeys(unittest.TestCase):
         silent = benchmark.benchmarking_variables[1]
         self.assertIsNone(silent.representation_types)
         self.assertIsNone(silent.representation_sizes)
-        self.assertIsNone(silent.correlations)
+        self.assertIsNone(silent.dependency_tracking_modes)
         self.assertIsNone(silent.analytic_ground_truth)
         self.assertEqual(
             self._matrix(benchmark, 1),
-            (RUN_WIDE_TYPES, RUN_WIDE_SIZES, RUN_WIDE_CORRELATIONS),
+            (RUN_WIDE_TYPES, RUN_WIDE_SIZES, RUN_WIDE_DEPENDENCY_TRACKING_MODES),
         )
 
     def test_each_axis_falls_back_on_its_own(self) -> None:
@@ -163,7 +198,7 @@ class TestLoadYamlPerVariableKeys(unittest.TestCase):
 
         self.assertEqual(
             self._matrix(benchmark, 1),
-            (RUN_WIDE_TYPES, [8], RUN_WIDE_CORRELATIONS),
+            (RUN_WIDE_TYPES, [8], RUN_WIDE_DEPENDENCY_TRACKING_MODES),
         )
 
     def test_analytic_reference_resolves_against_the_application(self) -> None:
@@ -201,7 +236,9 @@ class TestLoadYamlPerVariableKeys(unittest.TestCase):
 
         self.assertEqual(benchmark.representation_types, RUN_WIDE_TYPES)
         self.assertEqual(benchmark.representation_sizes, RUN_WIDE_SIZES)
-        self.assertEqual(benchmark.correlations, RUN_WIDE_CORRELATIONS)
+        self.assertEqual(
+            benchmark.dependency_tracking_modes, RUN_WIDE_DEPENDENCY_TRACKING_MODES
+        )
         self.assertFalse(benchmark.has_analytic_ground_truth)
         self.assertEqual([self._matrix(benchmark, index) for index in (0, 1)], first)
 
@@ -214,7 +251,7 @@ class TestLoadYamlPerVariableKeys(unittest.TestCase):
             "types given no value": ("RepresentationTypes", None),
             "non-integer size": ("RepresentationSizes", [8, "16"]),
             "boolean size": ("RepresentationSizes", [8, True]),
-            "unknown correlation": ("CorrelationTracking", ["Partial"]),
+            "unknown dependency_tracking": ("CorrelationTracking", ["Partial"]),
         }
         for label, (key, value) in cases.items():
             with self.subTest(label):

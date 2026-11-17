@@ -45,7 +45,7 @@ from signaloid_benchmarking.automation.scce import (
     _ux_strings_for,
 )
 from signaloid_benchmarking.config import (
-    Correlations,
+    DependencyTracking,
     EquivMC,
     RepresentationTypes,
     TimingFormat,
@@ -169,7 +169,7 @@ class TestMatchCore(unittest.TestCase):
             _CORES,
             representation_type=RepresentationTypes.ATHENS,
             representation_size=16,
-            correlation=Correlations.DISABLED,
+            dependency_tracking=DependencyTracking.NONE,
         )
 
         self.assertIsNotNone(core)
@@ -181,7 +181,7 @@ class TestMatchCore(unittest.TestCase):
             _CORES,
             representation_type=RepresentationTypes.ATHENS,
             representation_size=32,
-            correlation=Correlations.AUTOCORRELATION,
+            dependency_tracking=DependencyTracking.BASIC,
         )
 
         self.assertIsNone(core)
@@ -279,7 +279,7 @@ class TestScceRunner(unittest.TestCase):
                 tracing_db_path=self.tracing_db_path,
                 representation_types=[RepresentationTypes.ATHENS],
                 representation_sizes=[16],
-                correlations=[Correlations.DISABLED],
+                dependency_tracking_modes=[DependencyTracking.NONE],
             )
         run.assert_called_once_with(build_id="bld_1", arguments=arguments)
 
@@ -296,7 +296,7 @@ class TestScceRunner(unittest.TestCase):
 
         self.assertEqual(len(values), 1)
         self.assertEqual(repr(values[0]), "Athens-16")
-        self.assertEqual(values[0].correlation_tracking, Correlations.DISABLED)
+        self.assertEqual(values[0].dependency_tracking, DependencyTracking.NONE)
         # The particle value in the string is the position, rounded.
         self.assertAlmostEqual(values[0].dv.positions[0], 9.407459, places=5)
 
@@ -332,7 +332,7 @@ class TestScceRunner(unittest.TestCase):
                 tracing_db_path=self.tracing_db_path,
                 representation_types=[RepresentationTypes.ATHENS],
                 representation_sizes=[16],
-                correlations=[Correlations.DISABLED],
+                dependency_tracking_modes=[DependencyTracking.NONE],
             )
 
         core.assert_not_called()
@@ -370,7 +370,7 @@ class TestScceRunner(unittest.TestCase):
                     self.runner._core(
                         representation_type=RepresentationTypes.ATHENS,
                         representation_size=size,
-                        correlation=Correlations.DISABLED,
+                        dependency_tracking=DependencyTracking.NONE,
                     )
                 except (RuntimeError, KeyError):
                     # Size 32 matches nothing and the fake cannot create.
@@ -400,7 +400,7 @@ class TestScceRunner(unittest.TestCase):
             demo_cli_args="",
             representation_sizes=[16],
             representation_types=[RepresentationTypes.ATHENS],
-            correlations=[Correlations.DISABLED],
+            dependency_tracking_modes=[DependencyTracking.NONE],
         )
 
         return runs

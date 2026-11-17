@@ -154,7 +154,7 @@ class TestLoadMeasurementDicts(unittest.TestCase):
             demo_cli_args="",
             representation_sizes=[16],
             representation_types=[RepresentationTypes.ATHENS],
-            correlations=["Disabled"],
+            dependency_tracking_modes=["None"],
         )
 
         self.assertEqual(uxhw_version, "uxhw-Y")
@@ -190,7 +190,7 @@ class TestLoadMeasurementDicts(unittest.TestCase):
                 demo_cli_args="",
                 representation_sizes=[16],
                 representation_types=[RepresentationTypes.ATHENS],
-                correlations=["Disabled"],
+                dependency_tracking_modes=["None"],
             )
 
         message = str(exc_info.exception)
@@ -235,7 +235,7 @@ class TestLoadMeasurementDicts(unittest.TestCase):
             demo_cli_args="",
             representation_sizes=[16],
             representation_types=[RepresentationTypes.ATHENS],
-            correlations=["Disabled"],
+            dependency_tracking_modes=["None"],
         )
 
         # First non-empty value in run order wins. Not the second run's
@@ -287,7 +287,7 @@ class TestLoadMeasurementData(unittest.TestCase):
             demo_cli_args="",
             representation_sizes=[16],
             representation_types=[RepresentationTypes.ATHENS],
-            correlations=["Disabled"],
+            dependency_tracking_modes=["None"],
         )
 
         measurement_dict = variable.timing_measurements.measurement_dict
@@ -316,7 +316,7 @@ class TestLoadMeasurementData(unittest.TestCase):
             demo_cli_args="",
             representation_sizes=[16],
             representation_types=[RepresentationTypes.ATHENS],
-            correlations=["Disabled"],
+            dependency_tracking_modes=["None"],
         )
 
         self.assertIn("Athens-16", variable.timing_measurements.measurement_dict)
@@ -368,7 +368,7 @@ class TestLoadMeasurementData(unittest.TestCase):
             demo_cli_args="",
             representation_sizes=[16],
             representation_types=[RepresentationTypes.ATHENS],
-            correlations=["Disabled"],
+            dependency_tracking_modes=["None"],
         )
 
         uxhw = variable.timing_measurements.measurement_dict["Athens-16"]
@@ -423,7 +423,7 @@ class TestLoadMeasurementData(unittest.TestCase):
             demo_cli_args="",
             representation_sizes=[16],
             representation_types=[RepresentationTypes.ATHENS],
-            correlations=["Disabled"],
+            dependency_tracking_modes=["None"],
         )
 
         measurement_dict = variable.timing_measurements.measurement_dict
@@ -486,7 +486,7 @@ class TestLoadMeasurementData(unittest.TestCase):
             demo_cli_args="",
             representation_sizes=[16],
             representation_types=[RepresentationTypes.ATHENS],
-            correlations=["Disabled"],
+            dependency_tracking_modes=["None"],
         )
 
         measurement_dict = variable.timing_measurements.measurement_dict
@@ -520,7 +520,7 @@ class TestLoadMeasurementData(unittest.TestCase):
                 RepresentationTypes.ATHENS,
                 RepresentationTypes.JUPITER,
             ],
-            correlations=["Disabled"],
+            dependency_tracking_modes=["None"],
         )
 
         self.assertEqual(
@@ -533,8 +533,8 @@ class TestLoadMeasurementData(unittest.TestCase):
 
     def _load_jupiter_sweep(self, configs: list[str]) -> BenchmarkingVariable:
         """
-        Load one variable swept over Athens and Jupiter, with and without
-        autocorrelation, of which Jupiter with autocorrelation is skipped.
+        Load one variable swept over Athens and Jupiter, with None and Basic
+        dependency tracking, of which Jupiter with Basic is skipped.
 
         Args:
             configs: The configurations the timing layer measured.
@@ -544,7 +544,7 @@ class TestLoadMeasurementData(unittest.TestCase):
         """
         variable = _make_variable(name="x", description="x var", cla="-S 0")
         variable.skipped_configurations = {
-            "Jupiter-8-Autocorrelation": "the UxHw SDK has no library for it"
+            "Jupiter-8-Basic": "the UxHw SDK has no library for it"
         }
         load_measurement_data(
             benchmarking_variables=[variable],
@@ -555,7 +555,7 @@ class TestLoadMeasurementData(unittest.TestCase):
                 RepresentationTypes.ATHENS,
                 RepresentationTypes.JUPITER,
             ],
-            correlations=["Disabled", "Autocorrelation"],
+            dependency_tracking_modes=["None", "Basic"],
         )
 
         return variable
@@ -566,15 +566,13 @@ class TestLoadMeasurementData(unittest.TestCase):
         """
         The timing layer writes no row for a skipped configuration, so the
         loader must not expect one. Expecting the whole product failed every
-        run that requested Jupiter with autocorrelation, at step 12.
+        run that requested Jupiter with Basic, at step 12.
         """
-        variable = self._load_jupiter_sweep(
-            ["Athens-8", "Athens-8-Autocorrelation", "Jupiter-8"]
-        )
+        variable = self._load_jupiter_sweep(["Athens-8", "Athens-8-Basic", "Jupiter-8"])
 
         self.assertEqual(
             sorted(variable.timing_measurements.measurement_dict),
-            ["Athens-8", "Athens-8-Autocorrelation", "Jupiter-8"],
+            ["Athens-8", "Athens-8-Basic", "Jupiter-8"],
         )
 
     def test_load_measurement_data_names_a_missing_configuration(self) -> None:
@@ -582,13 +580,13 @@ class TestLoadMeasurementData(unittest.TestCase):
         with self.assertRaises(RuntimeError) as caught:
             self._load_jupiter_sweep(["Athens-8", "Jupiter-8"])
 
-        self.assertIn("x is missing Athens-8-Autocorrelation", str(caught.exception))
+        self.assertIn("x is missing Athens-8-Basic", str(caught.exception))
 
     def test_load_measurement_data_names_a_repeated_measurement(self) -> None:
         """A configuration measured twice is named, not counted as another."""
         with self.assertRaises(RuntimeError) as caught:
             self._load_jupiter_sweep(
-                ["Athens-8", "Athens-8", "Athens-8-Autocorrelation", "Jupiter-8"]
+                ["Athens-8", "Athens-8", "Athens-8-Basic", "Jupiter-8"]
             )
 
         self.assertIn(

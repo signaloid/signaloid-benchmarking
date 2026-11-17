@@ -118,7 +118,9 @@ def generate_database_native_mc(
             scalar_vars.append((var_idx, variable))
         else:
             print(
-                f"Warning! BenchmarkingVariable {variable.name} " f"type not supported!"
+                f"Warning: {variable.name} has the type {variable.type!r}, which "
+                f"is not {VariableTypes.DISTRIBUTION!r} or "
+                f"{VariableTypes.SCALAR!r}. No Monte Carlo samples are made for it."
             )
 
     if dist_vars:
@@ -294,9 +296,8 @@ def _run_distribution_mc_flat(
 
         if not values:
             raise RuntimeError(
-                f"No MC samples collected for variable "
-                f"'{variable.description}' (var_idx={var_idx}); "
-                f"all simulation chunks returned empty results."
+                f"No MC samples collected for '{variable.description}'. "
+                "Every native Monte Carlo run returned no values."
             )
 
         if weighted_samples:
@@ -349,9 +350,9 @@ def _run_distribution_mc_flat(
                     # ``[]``) would corrupt the database with under-sampled
                     # variables.
                     raise RuntimeError(
-                        f"MC simulation failed "
-                        f"(var_idx={var_idx}, chunk={chunk_idx}): "
-                        f"{exc}"
+                        "MC simulation failed for "
+                        f"'{benchmarking_variables[var_idx].description}' in "
+                        f"chunk {chunk_idx}. {exc}"
                     ) from exc
                 remaining_chunks[var_idx] -= 1
                 if remaining_chunks[var_idx] == 0:
@@ -465,7 +466,7 @@ def _run_scalar_mc_flat(
                 # variable under-sampled relative to
                 # ``n_adversaries`` * len(sizes).
                 raise RuntimeError(
-                    f"Scalar MC run failed for " f"{variable.description}: {exc}"
+                    f"Scalar MC run failed for '{variable.description}'. {exc}"
                 ) from exc
             finally:
                 remaining_runs[var_idx] -= 1
