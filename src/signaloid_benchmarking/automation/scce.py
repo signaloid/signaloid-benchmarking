@@ -33,6 +33,7 @@ from signaloid_benchmarking.automation.benchmarking_utils import (
 )
 from signaloid_benchmarking.automation.build import jupiter_size_skip_reason
 from signaloid_benchmarking.config import (
+    DependencyTracking,
     EquivMC,
     Scce,
     TimingFormat,
@@ -182,7 +183,7 @@ def _core_name(
     *,
     representation_type: str,
     representation_size: int,
-    correlation: str,
+    dependency_tracking: str,
 ) -> str:
     """
     Name the core a configuration is created as.
@@ -190,15 +191,15 @@ def _core_name(
     Args:
         representation_type: For example ``Athens``.
         representation_size: For example ``16``.
-        correlation: ``Disabled`` or ``Autocorrelation``.
+        dependency_tracking: ``None``, ``Basic``, or ``Advanced``.
 
     Returns:
-        For example ``C0Pro-Athens-16-Autocorrelation``.
+        For example ``C0Pro-Athens-16-Basic``.
     """
     configuration = configuration_string(
         representation_type=representation_type,
         representation_size=representation_size,
-        correlation=correlation,
+        dependency_tracking=dependency_tracking,
     )
 
     return f"{CORE_CLASS}-{configuration}"
@@ -209,20 +210,20 @@ def _match_core(
     *,
     representation_type: str,
     representation_size: int,
-    correlation: str,
+    dependency_tracking: str,
 ) -> dict[str, Any] | None:
     """
     Find a core a configuration can run on.
 
     A core matches on its class, microarchitecture, precision and
-    correlation tracking, whatever it is named, so a default core and a
+    dependency tracking, whatever it is named, so a default core and a
     user-created one serve alike.
 
     Args:
         cores: Core records as ``signaloid-cli cores list`` returns them.
         representation_type: For example ``Athens``.
         representation_size: For example ``16``.
-        correlation: ``Disabled`` or ``Autocorrelation``.
+        dependency_tracking: ``None``, ``Basic``, or ``Advanced``.
 
     Returns:
         The first matching core, or ``None``.
@@ -231,7 +232,7 @@ def _match_core(
         CORE_CLASS,
         representation_type,
         int(representation_size),
-        Scce.CORE_CORRELATION_TRACKING[correlation],
+        Scce.CORE_DEPENDENCY_TRACKING[dependency_tracking],
     )
     for core in cores:
         found = (
@@ -560,7 +561,7 @@ class ScceRunner:
         *,
         representation_type: str,
         representation_size: int,
-        correlation: str,
+        dependency_tracking: str,
     ) -> dict[str, Any]:
         """
         The core a configuration runs on, created when none matches.
@@ -568,7 +569,7 @@ class ScceRunner:
         Args:
             representation_type: For example ``Athens``.
             representation_size: For example ``16``.
-            correlation: ``Disabled`` or ``Autocorrelation``.
+            dependency_tracking: ``None``, ``Basic``, or ``Advanced``.
 
         Returns:
             The core's record, with at least ``CoreID`` and ``Name``.
@@ -580,7 +581,7 @@ class ScceRunner:
         configuration = configuration_string(
             representation_type=representation_type,
             representation_size=representation_size,
-            correlation=correlation,
+            dependency_tracking=dependency_tracking,
         )
         if configuration in self.cores_by_configuration:
             return self.cores_by_configuration[configuration]
@@ -596,13 +597,13 @@ class ScceRunner:
             self.cores,
             representation_type=representation_type,
             representation_size=representation_size,
-            correlation=correlation,
+            dependency_tracking=dependency_tracking,
         )
         if core is None:
             name = _core_name(
                 representation_type=representation_type,
                 representation_size=representation_size,
-                correlation=correlation,
+                dependency_tracking=dependency_tracking,
             )
             print(f"Creating SCCE core {name}")
             core = _cli_json(
@@ -620,7 +621,7 @@ class ScceRunner:
                     "--microarchitecture",
                     representation_type,
                     "--correlation-tracking",
-                    Scce.CORE_CORRELATION_TRACKING[correlation],
+                    Scce.CORE_DEPENDENCY_TRACKING[dependency_tracking],
                 ]
             )
             self.cores.append(core)
@@ -861,7 +862,7 @@ class ScceRunner:
         tracing_db_path: str,
         representation_types: list[str],
         representation_sizes: list[int],
-        correlations: list[str],
+        dependency_tracking_modes: list[str],
     ) -> None:
         """
         Run one variable on every configuration of its matrix and store
@@ -876,7 +877,7 @@ class ScceRunner:
             representation_types: Run-wide types. The variable's own
                 apply when it declares them.
             representation_sizes: Run-wide sizes, likewise.
-            correlations: Run-wide correlation modes, likewise.
+            dependency_tracking_modes: Run-wide dependency tracking modes, likewise.
 
         Raises:
             RuntimeError: If a task record has no processor time.
@@ -886,24 +887,24 @@ class ScceRunner:
         types, sizes, modes = variable.representation_matrix(
             representation_types=representation_types,
             representation_sizes=representation_sizes,
-            correlations=correlations,
+            dependency_tracking_modes=dependency_tracking_modes,
         )
         task_arguments = f"{self.demo_cli_args} {variable.cla} {TASK_FLAGS}".strip()
         measurements: list[_ScceMeasurement] = []
         for representation_type in types:
             for representation_size in sizes:
-                for correlation in modes:
+                for dependency_tracking in modes:
                     configuration = configuration_string(
                         representation_type=representation_type,
                         representation_size=representation_size,
-                        correlation=correlation,
+                        dependency_tracking=dependency_tracking,
                     )
                     if configuration in variable.skipped_configurations:
                         continue
                     core = self._core(
                         representation_type=representation_type,
                         representation_size=representation_size,
-                        correlation=correlation,
+                        dependency_tracking=dependency_tracking,
                     )
                     build_id = self._build_id(core["CoreID"])
                     print(f"Running {variable.name} as {configuration} on SCCE")
@@ -918,7 +919,7 @@ class ScceRunner:
                             task_arguments=task_arguments,
                             representation_type=representation_type,
                             representation_size=representation_size,
-                            correlation=correlation,
+                            dependency_tracking=dependency_tracking,
                         )
                     )
         self.measurements[variable.name] = measurements
@@ -934,7 +935,7 @@ class ScceRunner:
         task_arguments: str,
         representation_type: str,
         representation_size: int,
-        correlation: str,
+        dependency_tracking: str,
     ) -> _ScceMeasurement:
         """
         Store a task's Ux strings in the tracing database and read its
@@ -951,7 +952,7 @@ class ScceRunner:
                 run.
             representation_type: The configuration's representation type.
             representation_size: Its size.
-            correlation: Its correlation tracking.
+            dependency_tracking: Its dependency tracking.
 
         Returns:
             The task's timing.
@@ -993,7 +994,9 @@ class ScceRunner:
             declaration=(variable.program, variable.path, line_number, line_number),
             ur_type=representation_type,
             ur_order=representation_size,
-            correlation_tracking=correlation,
+            # The database takes the SDK's earlier names, as a local run's
+            # database has them. The readers translate them back.
+            dependency_tracking=DependencyTracking.to_sdk(dependency_tracking),
         )
         stats = task.stats
         processor_time = stats.get("ProcessorTime")
@@ -1048,7 +1051,7 @@ def generate_uxhw_tracing_database_on_scce(
     tracing_db_path: str,
     representation_types: list[str],
     representation_sizes: list[int],
-    correlations: list[str],
+    dependency_tracking_modes: list[str],
 ) -> None:
     """
     Generate the UxHw tracing database by running every variable on SCCE.
@@ -1060,7 +1063,7 @@ def generate_uxhw_tracing_database_on_scce(
             rows do not bleed into the new results.
         representation_types: Run-wide types, from ``-u``.
         representation_sizes: Run-wide sizes, from ``-s``.
-        correlations: Run-wide correlation modes, from ``-c``.
+        dependency_tracking_modes: Run-wide dependency tracking modes, from ``-c``.
     """
     print("Generating UxHw tracing database on SCCE.")
     if os.path.isfile(tracing_db_path):
@@ -1072,5 +1075,5 @@ def generate_uxhw_tracing_database_on_scce(
             tracing_db_path=tracing_db_path,
             representation_types=representation_types,
             representation_sizes=representation_sizes,
-            correlations=correlations,
+            dependency_tracking_modes=dependency_tracking_modes,
         )

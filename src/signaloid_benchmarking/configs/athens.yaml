@@ -1,12 +1,12 @@
 # configs/athens.yaml — benchmarking_automation sweep, Athens only.
 # Pass with:
-#   benchmarking_automation --config configs/athens.yaml \
+#   signaloid-benchmarking --config src/signaloid_benchmarking/configs/athens.yaml \
 #       --path-to-application <demo>
 
 # Experiment matrix (Athens across the full order range).
 representation_types: [Athens]
 representation_sizes: [16, 32, 64, 128, 256, 512]
-correlations: [Disabled, Autocorrelation]
+dependency_tracking: [None, Basic]
 reporting_methods: [Mean, Quantile-95, Quantile-99]
 
 # Distance / EMCC settings.

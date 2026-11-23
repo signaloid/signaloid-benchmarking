@@ -1,12 +1,12 @@
 # configs/europa.yaml — benchmarking_automation sweep, Europa only.
 # Pass with:
-#   benchmarking_automation --config configs/europa.yaml \
+#   signaloid-benchmarking --config src/signaloid_benchmarking/configs/europa.yaml \
 #       --path-to-application <demo>
 
 # Experiment matrix (Europa across the full order range).
 representation_types: [Europa]
 representation_sizes: [16, 32, 64, 128, 256, 512]
-correlations: [Disabled, Autocorrelation]
+dependency_tracking: [Advanced]
 reporting_methods: [Mean, Quantile-95, Quantile-99]
 
 # Distance / EMCC settings.

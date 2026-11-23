@@ -404,7 +404,7 @@ def _insert_execution_info(
     cursor: sqlite3.Cursor,
     ur_type: str | None,
     ur_order: int | None,
-    correlation_tracking: str | None,
+    dependency_tracking: str | None,
 ) -> int:
     """
     Insert one row into ``Emulator_Execution_Info``.
@@ -417,7 +417,7 @@ def _insert_execution_info(
         ur_type: The uncertainty representation the core was configured
             with.
         ur_order: Its order.
-        correlation_tracking: Whether the core was tracking correlations.
+        dependency_tracking: Whether the core was tracking dependency_tracking_modes.
 
     Returns:
         The ``Execution_ID`` the row was given.
@@ -431,7 +431,7 @@ def _insert_execution_info(
             ur_type,
             ur_order,
             _ur_order_core_library(ur_order, ur_type),
-            correlation_tracking,
+            dependency_tracking,
         ),
     )
 
@@ -451,7 +451,7 @@ def record_inference(
     declaration: tuple[str | None, str | None, int | None, int | None] | None = None,
     ur_type: str | None = None,
     ur_order: int | None = None,
-    correlation_tracking: str | None = None,
+    dependency_tracking: str | None = None,
 ) -> int:
     """
     Store the outputs of one inference.
@@ -487,7 +487,7 @@ def record_inference(
         ur_type: The uncertainty representation the core was configured
             with.
         ur_order: Its order. ``UR_Order_CoreLibrary`` follows from this.
-        correlation_tracking: Whether the core was tracking correlations.
+        dependency_tracking: Whether the core was tracking dependency_tracking_modes.
 
     Returns:
         The ``RunId`` the run was given.
@@ -517,7 +517,7 @@ def record_inference(
             cursor,
             ur_type=ur_type,
             ur_order=ur_order,
-            correlation_tracking=correlation_tracking,
+            dependency_tracking=dependency_tracking,
         )
 
         run_id = _insert_run(

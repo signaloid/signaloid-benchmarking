@@ -72,20 +72,20 @@ def pairing_key(uxhw: TaggedDistributionalValue) -> tuple[int, str, str]:
     """
     Sort key that lines up baseline and under-test configurations for pairing.
 
-    Size and correlation tracking come first because a pair must match on
+    Size and dependency tracking come first because a pair must match on
     both. The representation type may differ between the two sides, so
-    sorting on it first could pair e.g. Athens-16 with Atlas-32. The
+    sorting on it first could pair e.g. Athens-16 with Rome-32. The
     configuration string breaks ties deterministically.
 
     Args:
         uxhw: A loaded UxHw configuration.
 
     Returns:
-        A tuple of (size, correlation tracking, configuration string).
+        A tuple of (size, dependency tracking, configuration string).
     """
     assert uxhw.representation_size is not None
-    assert uxhw.correlation_tracking is not None
-    return (uxhw.representation_size, uxhw.correlation_tracking, repr(uxhw))
+    assert uxhw.dependency_tracking is not None
+    return (uxhw.representation_size, uxhw.dependency_tracking, repr(uxhw))
 
 
 def benchmarking_variables(yaml_dict: dict) -> list[tuple[str, str]]:
@@ -349,13 +349,15 @@ def main(argv: list[str] | None = None) -> None:
         help="Database table containing the UxHw data.",
     )
 
-    # UxHw configurations. These are the values matched against the DB UR_Type
-    # column.
+    # UxHw configurations. These are matched against the DB UR_Type column,
+    # where a Rome filter also matches the Atlas rows of an SDK from before
+    # the rename. Atlas is accepted as the earlier name of Rome.
     representation_type_choices = [
         RepresentationTypes.ATHENS,
+        RepresentationTypes.ROME,
         RepresentationTypes.JUPITER,
-        RepresentationTypes.ATLAS,
         RepresentationTypes.EUROPA,
+        RepresentationTypes.MERCURY,
     ]
     parser.add_argument(
         "--baseline-uncertainty-representation-type",
@@ -363,6 +365,7 @@ def main(argv: list[str] | None = None) -> None:
         default=[],
         required=True,
         choices=representation_type_choices,
+        type=RepresentationTypes.from_earlier_name,
         action="extend",
         nargs="+",
         help="Uncertain Representation type to look for in the baseline UxHw data.",
@@ -374,6 +377,7 @@ def main(argv: list[str] | None = None) -> None:
         default=[],
         required=True,
         choices=representation_type_choices,
+        type=RepresentationTypes.from_earlier_name,
         action="extend",
         nargs="+",
         help="Uncertain Representation type to look for in the under-test UxHw data.",
@@ -457,13 +461,19 @@ def main(argv: list[str] | None = None) -> None:
 
         if len(uxhw_baseline_list) != len(uxhw_undertest_list):
             print(
-                "UxHw baseline and UxHw under-test differ in configurations. Exiting."
+                f"The UxHw baseline has {len(uxhw_baseline_list)} configurations "
+                f"for {target_expr}, but the UxHw under-test has "
+                f"{len(uxhw_undertest_list)}. Each side must have the same "
+                f"sizes and dependency tracking. The baseline has "
+                f"{sorted(map(repr, uxhw_baseline_list))}, and the under-test "
+                f"has {sorted(map(repr, uxhw_undertest_list))}.",
+                file=sys.stderr,
             )
             sys.exit(-1)
 
         # Sort both lists so the zip pairs matching configurations. Without
         # sorting, groupby ordering from different databases may not match,
-        # causing e.g. CORRELATION_OFF to be compared against COMMON_ANCESTOR.
+        # causing e.g. None to be compared against Basic dependency tracking.
         uxhw_baseline_list.sort(key=pairing_key)
         uxhw_undertest_list.sort(key=pairing_key)
 
@@ -472,16 +482,18 @@ def main(argv: list[str] | None = None) -> None:
             uxhw_baseline_list, uxhw_undertest_list
         ):
             # Equal counts do not mean the sorted lists line up. Representation
-            # types may differ on purpose, but sizes and correlation tracking
+            # types may differ on purpose, but sizes and dependency tracking
             # must match, or e.g. Athens-16 is compared against Athens-32.
             if (
                 uxhw_baseline.representation_size != uxhw_undertest.representation_size
-                or uxhw_baseline.correlation_tracking
-                != uxhw_undertest.correlation_tracking
+                or uxhw_baseline.dependency_tracking
+                != uxhw_undertest.dependency_tracking
             ):
                 print(
                     f"Cannot pair UxHw baseline {uxhw_baseline!r} with UxHw "
-                    f"under-test {uxhw_undertest!r}. Exiting."
+                    f"under-test {uxhw_undertest!r} for {target_expr}. A pair "
+                    "must have the same size and dependency tracking.",
+                    file=sys.stderr,
                 )
                 sys.exit(-1)
 

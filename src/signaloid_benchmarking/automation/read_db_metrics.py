@@ -51,7 +51,7 @@ def read_db_metric(db_path: str, metric: str) -> float:
     """
     if metric not in _METRIC_QUERIES:
         valid = ", ".join(sorted(_METRIC_QUERIES))
-        raise KeyError(f"unknown metric {metric!r}; valid choices: {valid}")
+        raise KeyError(f"Unknown metric {metric!r}. Use one of {valid}.")
     sql = _METRIC_QUERIES[metric]
     # `uri=True` + `mode=ro` opens read-only and raises OperationalError if the
     # file is missing (instead of silently creating an empty DB). The path is
@@ -63,7 +63,7 @@ def read_db_metric(db_path: str, metric: str) -> float:
         row = cursor.fetchone()
     if row is None or row[0] is None:
         raise ValueError(
-            f"query returned no value for metric {metric!r} " f"from {db_path!r}"
+            f"The query for metric {metric!r} returned no value from {db_path}."
         )
     return float(row[0])
 

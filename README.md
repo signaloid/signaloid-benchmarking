@@ -1,142 +1,192 @@
 # Signaloid Benchmarking
 
-The Signaloid Benchmarking package provides tools for benchmarking
-applications that use Signaloid's UxHw® technology for distributional
-arithmetic against equivalent Monte Carlo methods. The benchmarking tool
-builds and runs an application natively and with UxHw, computes the
-equivalent Monte Carlo count of each UxHw configuration, collects timing
-data, and writes reports.
+This package provides tools for benchmarking applications that use Signaloid's UxHw® technology. This allows you to quantify the relative speedup of a program that utilizes Signaloid's distribution-extended compute capabilities compared to a reference method such as Monte Carlo.
 
-The package provides the `signaloid_benchmarking` Python package. It builds
-on the [Signaloid Data Toolkit](https://github.com/signaloid/signaloid-data-toolkit)
-(the `signaloid` package on PyPI), which provides the Ux Data parsing, distance
-metrics, and plotting the benchmarking tools use.
+The `signaloid_benchmarking` Python package builds on the
+[Signaloid Data Toolkit](https://github.com/signaloid/signaloid-data-toolkit),
+the `signaloid` package on PyPI. The benchmarking tool builds and runs an application natively and with UxHw, computes the equivalent Monte Carlo count of each UxHw configuration, collects timing data, and writes reports.
 
-## Contents
+![How signaloid-benchmarking measures speedup](https://raw.githubusercontent.com/signaloid/signaloid-benchmarking/main/images/signaloid-benchmarking-process.png)
 
-| Package | Description |
-|---|---|
-| [`signaloid_benchmarking.automation`](src/signaloid_benchmarking/automation/README.md) | The `signaloid-benchmarking` command-line tool that runs the whole benchmarking pipeline. |
-| [`signaloid_benchmarking.equivalent_mc`](src/signaloid_benchmarking/equivalent_mc/README.md) | Computes equivalent Monte Carlo counts from ground truth, adversary, and UxHw databases. |
-| [`signaloid_benchmarking.profiling`](src/signaloid_benchmarking/profiling/README.md) | The `signaloid-memory-profile` command-line tool that measures the uncertain memory pool an application needs. |
-| [`signaloid_benchmarking.differential_accuracy`](src/signaloid_benchmarking/differential_accuracy/README.md) | The `distance_uxhw_vs_mc` command-line tool that compares how close a baseline and an under-test UxHw run land to the same ground truth, and the `ks_convergence_gate` tool that drops the configurations that converge on neither run. |
-| `signaloid_benchmarking.benchmark_timing` | The bash timing and compilation scripts the pipeline sources. |
-| `signaloid_benchmarking.distribution_helpers` | Helpers for collapsing, binning, and checking the health of distributions. |
-| `signaloid_benchmarking.configs` | Ready-made YAML sweep configurations for the `--config` argument. |
-| `signaloid_benchmarking.assets` | The build-template assets, a git submodule. |
+## Tools
 
-## Requirements
+This package contains the following tools:
 
-The Signaloid Benchmarking package requires Python 3.11 or later. See
-`pyproject.toml` for the full list of Python dependencies. The benchmarking
-tool also needs system tools and the Signaloid UxHw SDK. See the automation
-[README.md](src/signaloid_benchmarking/automation/README.md) for the full
-list.
+| Command or function | Use it to | Guide |
+|---|---|---|
+| `signaloid-benchmarking` | Measure the equivalent Monte Carlo count and speedup of each UxHw configuration of an application. | [automation](src/signaloid_benchmarking/automation/README.md) |
+| `signaloid-memory-profile` | Find the exact uncertain memory pool size that one UxHw run needs. | [profiling](src/signaloid_benchmarking/profiling/README.md) |
+| `distance_uxhw_vs_mc` | Regression-test a new UxHw SDK build. It compares the accuracy of two runs of the same application against one ground truth. | [differential accuracy](src/signaloid_benchmarking/differential_accuracy/README.md) |
+| `ks_convergence_gate` | Test for distributional convergence with a simple Kolmogorov-Smirnov (KS) gate. | [differential accuracy](src/signaloid_benchmarking/differential_accuracy/README.md#ks_convergence_gate) |
 
-The build-template assets are a git submodule at
-`src/signaloid_benchmarking/assets`. Clone with `--recurse-submodules`, or run
-`git submodule update --init` after cloning.
+## How it works
+
+UxHw's distribution-extended compute capabilities allow for the deterministic computation of quantities usually determined by stochastic methods such as Monte Carlo. Monte Carlo handles distributions by running a program numerous times with
+random samples, whereas UxHw runs the program once.
+
+This brings a challenge when comparing UxHw and Monte Carlo (MC) as MC inherently has variability and its answers will vary from run to run. Therefore, we can only compare the
+accuracy of a UxHw run with the average accuracy of MC, or say that UxHw is as accurate as MC with a given confidence, for example 95%.
+
+`signaloid_benchmarking` does the following for each output of an application.
+
+1. It builds a **ground truth** for the application, a distribution deemed to be correct, or very close to correct. This is typically a large Monte Carlo run, or an exact formula.
+2. It runs the application with UxHw, and measures the **distance** from the
+   UxHw output to the ground truth. Distances metrics include Wasserstein family of distances.
+3. It runs smaller Monte Carlo runs, the **adversaries**, at a range of
+   sample counts, and measures their distances too.
+4. It finds the **equivalent Monte Carlo count (EMCC)**. This is the smallest
+   Monte Carlo sample count that has the same distance to the ground truth as UxHw. This can often be done by a central limit theorem (CLT).
+5. It times the native Monte Carlo program at the EMCC, and divides that by
+   the UxHw time. The result is the **speedup** at equal accuracy.
+
+The tool repeats this for every UxHw configuration that you ask for. A UxHw configuration is a microarchitecture with a specified representation size and dependency tracking setting. Microarchitectures include Athens, Rome, Mercury, Jupiter, and Europa. The representation size is a measure of the fidelity of the underlying distributions, with larger representations incurring longer run times in exchange for better accuracy. All representation sizes must be powers of 2, from 16 to 512.
+
+Athens and Rome have the option of basic dependency tracking or no dependency tracking (e.g., `Rome-64-Basic` or `Rome-64-None`). Mercury, Jupiter, and Europa all support advanced dependency tracking only (e.g., `Mercury-16-Advanced`).
+
+## Supported platforms
+
+| | Linux x86-64 | macOS |
+|---|---|---|
+| Install the package | Yes | Yes |
+| `signaloid-benchmarking` and `signaloid-memory-profile` | Yes | No |
+| `distance_uxhw_vs_mc`, `ks_convergence_gate`, and the Python library | Yes | Yes |
+
+The package supports Python 3.11 and later. CI tests Python 3.11 to 3.15 on
+Linux and macOS.
+
+`signaloid-benchmarking` and `signaloid-memory-profile` build the
+application with the Signaloid UxHw SDK. The SDK comes installed on the
+Signaloid Computing Engine Amazon Machine Image (AMI).
+
+The SDK picks the build of the UxHw core library that matches the CPU. On a
+CPU with AVX-512, it uses the AVX-512 build. On any other x86-64 CPU, it
+uses the baseline build, which is slower and runs in single precision.
+Results from the two builds can differ, so run every benchmark that you
+want to compare on the same kind of machine. To check a Linux machine, run
+`grep -m1 -o avx512f /proc/cpuinfo`. It prints `avx512f` when the CPU has
+AVX-512.
 
 ## Installation
 
-Install the latest version from the GitHub repository.
+The package is not on PyPI. Install it from GitHub with pip or Poetry.
+
+
+### Choosing a Python version
+
+The package supports Python 3.11, 3.12, 3.13, 3.14, and 3.15. Python 3.11 and later is recommended.
+
+### With `pip`
+
+Install into a virtual environment.
 ```bash
+python -m venv .venv
+source .venv/bin/activate
 python -m pip install git+https://github.com/signaloid/signaloid-benchmarking
 ```
 
-Alternatively, clone this repository and install from source.
+Add the `sheets` extra for the optional Google Sheets upload.
+```bash
+python -m pip install "signaloid-benchmarking[sheets] @ git+https://github.com/signaloid/signaloid-benchmarking"
+```
+
+To pin a branch, tag, or commit, add `@<ref>` to the end of the URL.
+
+### With `poetry`
+
+Add the package to your Poetry project. The project must use a supported
+Python version.
+```bash
+poetry add git+https://github.com/signaloid/signaloid-benchmarking.git
+```
+
+Add `--extras sheets` for the optional Google Sheets upload. To pin a branch,
+tag, or commit, add `#<ref>` to the end of the URL.
+```bash
+poetry add git+https://github.com/signaloid/signaloid-benchmarking.git#main --extras sheets
+```
+
+Run the tools through Poetry, so that you use the project's copy.
+```bash
+poetry run signaloid-benchmarking --help
+```
+
+### From a clone
+
+Clone with `--recurse-submodules`, because the build templates are a git
+submodule at `src/signaloid_benchmarking/assets`.
 ```bash
 git clone --recurse-submodules https://github.com/signaloid/signaloid-benchmarking
 cd signaloid-benchmarking
-python -m pip install .
-```
-
-Add the `sheets` extra to also install the optional Google Sheets upload.
-```bash
+python3.13 -m venv .venv
+source .venv/bin/activate
 python -m pip install ".[sheets]"
 ```
 
-## Usage
+If you cloned without `--recurse-submodules`, run
+`git submodule update --init` before you install.
 
-### Benchmarking UxHw applications
+### Checking the install
 
-Use the `signaloid-benchmarking` command-line tool to benchmark an application
-running with UxHw against a Monte Carlo baseline. The following example
-benchmarks for UxHw Core microarchitectures Athens and Jupiter for precisions 8,
-16, and 32, for both types of correlation tracking.
-
+Check that the command runs and that it lists the representation types you
+expect.
 ```bash
+signaloid-benchmarking --help
+```
+
+### Replacing an older copy
+
+Installing replaces any older copy of `signaloid-benchmarking` in the same
+environment. Each build adds its commit hash to its version, for example
+`1.0.0+e8bf650`, so pip never mistakes one build for another.
+
+If the command still behaves like an old version, another copy is probably
+earlier on your `PATH`. List every copy, then uninstall the stale one with
+the Python that it belongs to.
+```bash
+which -a signaloid-benchmarking
+python -m pip uninstall signaloid-benchmarking
+```
+
+To be sure that you use the copy in the active Python environment, run the
+tool as a module instead. It takes the same options.
+```bash
+python -m signaloid_benchmarking.automation --help
+```
+
+## Running a benchmark
+
+This command runs the recommended Athens benchmark. Change the two paths to
+your application and your UxHw SDK. Run it from an empty directory, because
+the tool writes its results to the current directory.
+```bash
+mkdir ~/benchmark-run && cd ~/benchmark-run
 signaloid-benchmarking \
-    --path-to-application ./my-uxhw-app \
-    --path-to-uxhw-sdk ~/project-uxhw-sdk \
-    -u Athens Jupiter \
-    -s 8 16 32 \
-    -c Disabled Autocorrelation \
-    -r Mean
+    --path-to-application ~/my-application \
+    --path-to-uxhw-sdk /opt/Signaloid-UxHw-SDK \
+    -u Athens \
+    -s 16 32 64 128 256 512 \
+    -d None Basic \
+    -r Mean Quantile-95 Quantile-99 \
+    --ground-truth-type WeightedSamples \
+    --ground-truth-size 2000000 \
+    --max-num-weighted-samples 500000 \
+    --adversary-mc-size 1000000 \
+    --adversary-max-size-scalar 100000 \
+    --num-adversaries 100 \
+    --use-clt
 ```
 
-The tool needs access to the Signaloid UxHw SDK to build the applications for
-UxHw, or `--run-uxhw-scce` to build and run them on the Signaloid Cloud
-Compute Engine through the signaloid-cli helper scripts instead. The Intel Pin
-tool is optional and off by default. Export `PIN_ROOT` and
-pass `--measure-dynamic-instructions` to also measure the dynamic instruction
-count. Without that flag the run never uses Pin, even when `PIN_ROOT` is set,
-and reports the count as missing. Arguments
-`-u/--representation-types`, `-s/--representation-sizes`,
-`-c/--uncertainty-correlation_types`, `-r/--reporting-methods` can also be
-supplied using a YAML file with `--config <file>`. The `configs/` directory
-of the package holds ready-made sweeps.
-
-For details, see the package [README.md](src/signaloid_benchmarking/automation/README.md).
-
-### Profiling memory use
-
-Use the `signaloid-memory-profile` command-line tool to find the exact number
-of uncertain memory pool elements one UxHw run needs.
-
-```bash
-signaloid-memory-profile \
-    --path-to-application ./my-uxhw-app \
-    --representation-type Athens \
-    --representation-size 4 \
-    --output athens-4.json
-```
-
-For details, see the package [README.md](src/signaloid_benchmarking/profiling/README.md).
-
-### Comparing accuracy of two UxHw runs
-
-Use the `distance_uxhw_vs_mc` command-line tool to check whether an
-under-test UxHw run landed closer to the ground truth than a baseline run.
-It writes a markdown table with the distance of each run to the ground truth
-and a traffic-light score per configuration.
-
-```bash
-distance_uxhw_vs_mc \
-    --ground-truth-database ground-truth.db \
-    --uxhw-baseline-database old-build.db \
-    --uxhw-under-test-database new-build.db \
-    --uxhw-tables Evaluation \
-    --baseline-uncertainty-representation-type Atlas \
-    --under-test-uncertainty-representation-type Atlas \
-    --uncertainty-representation-sizes 16 \
-    --yaml-signaloid signaloid.yaml \
-    -o report.md
-```
-
-For details, see the package [README.md](src/signaloid_benchmarking/differential_accuracy/README.md).
-
-### Computing equivalent Monte Carlo counts
-
-Import `load_data_and_compute_equivalent_mc` from `signaloid_benchmarking` to
-compute equivalent Monte Carlo counts from existing ground truth, adversary,
-and UxHw databases without running the whole pipeline. For details, see the
-package [README.md](src/signaloid_benchmarking/equivalent_mc/README.md).
+A full run takes hours. The speedups end up in one Markdown report for each
+output, in `results/`. The
+[automation guide](src/signaloid_benchmarking/automation/README.md) covers
+how to prepare an application, a public demo to try first, a quick test run,
+the commands for the other representation types, and how to read the
+results.
 
 ## Development
 
 Install the package and its development dependencies with Poetry, then run
-the checks that CI runs.
+the checks that CI runs. Use a supported Python version, ideally 3.13.
 
 ```bash
 poetry install --all-extras
@@ -146,8 +196,29 @@ poetry run mypy -p signaloid_benchmarking
 poetry run pytest
 ```
 
-The unit tests live beside the code they test, as `*_test.py` files. The
-end-to-end smoke test in [`tests/e2e/`](tests/e2e/README.md) runs the whole
-pipeline against a pinned public demo. It needs a UxHw SDK and network
-access, and is skipped otherwise.
+To develop with pip instead, install from a clone in editable mode, so that
+your changes take effect without a reinstall. This skips the development
+tools, such as `pytest` and `mypy`.
+```bash
+python -m pip install -e ".[sheets]"
+```
 
+The code is in `src/signaloid_benchmarking/`.
+
+| Package | Contents |
+|---|---|
+| [`automation`](src/signaloid_benchmarking/automation/README.md) | The `signaloid-benchmarking` pipeline. |
+| [`equivalent_mc`](src/signaloid_benchmarking/equivalent_mc/README.md) | The EMCC computation. |
+| [`profiling`](src/signaloid_benchmarking/profiling/README.md) | `signaloid-memory-profile`. |
+| [`differential_accuracy`](src/signaloid_benchmarking/differential_accuracy/README.md) | `distance_uxhw_vs_mc` and `ks_convergence_gate`. |
+| `benchmark_timing` | The Bash timing and build scripts that the pipeline sources. |
+| `distribution_helpers` | Helpers for collapsing, binning, and checking the health of distributions. |
+| `configs` | The preset YAML files for `--config`. |
+| `assets` | The build templates, a git submodule. |
+
+The unit tests are `*_test.py` files next to the code they test. To run one
+file, or one test, name it.
+```bash
+poetry run pytest src/signaloid_benchmarking/automation/report_writer_test.py
+poetry run pytest src/signaloid_benchmarking/automation/report_writer_test.py -k blow_up
+```

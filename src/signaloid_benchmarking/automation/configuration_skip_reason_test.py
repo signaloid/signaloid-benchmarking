@@ -27,6 +27,8 @@ real ``make`` on the real ``Makefile.pro`` against a small fake SDK, whose
 makefile picks a library directory and name the way the real SDK's does.
 """
 
+import contextlib
+import io
 import os
 import shutil
 import tempfile
@@ -34,7 +36,10 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from signaloid_benchmarking.automation.build import configuration_skip_reason
+from signaloid_benchmarking.automation.build import (
+    configuration_skip_reason,
+    sdk_representation_type,
+)
 
 # Chooses the library directory from PRECISION, as the real SDK chooses it
 # from its precision setting, so a test can show that the application's
@@ -80,7 +85,7 @@ class TestConfigurationSkipReason(unittest.TestCase):
         self,
         representation_type: str,
         representation_size: int,
-        correlation: str,
+        dependency_tracking: str,
         *,
         max_jupiter_size: int = 32,
     ) -> str | None:
@@ -90,7 +95,7 @@ class TestConfigurationSkipReason(unittest.TestCase):
         Args:
             representation_type: For example ``Europa``.
             representation_size: For example ``8``.
-            correlation: ``Disabled`` or ``Autocorrelation``.
+            dependency_tracking: ``None``, ``Basic``, or ``Advanced``.
             max_jupiter_size: The largest Jupiter size to benchmark.
 
         Returns:
@@ -100,22 +105,23 @@ class TestConfigurationSkipReason(unittest.TestCase):
             path_to_application=str(self.application),
             path_to_uxhw_sdk=str(self.sdk),
             representation_type=representation_type,
+            sdk_representation_type=representation_type,
             representation_size=representation_size,
-            correlation=correlation,
+            dependency_tracking=dependency_tracking,
             max_jupiter_size=max_jupiter_size,
         )
 
     def test_a_configuration_without_a_runtime_library_is_skipped(self) -> None:
-        """Europa ships no autocorrelation library here, as in SDK 6.6.0."""
-        reason = self._reason("Europa", 8, "Autocorrelation")
+        """Europa ships no library for Basic here, as in SDK 6.6.0."""
+        reason = self._reason("Europa", 8, "Basic")
 
         self.assertIsNotNone(reason)
         self.assertIn("libuxhw_runtime_Europa_8_Autocorrelation.a", reason or "")
 
     def test_a_configuration_with_its_runtime_library_runs(self) -> None:
-        """The same type without autocorrelation tracking has a library."""
-        self.assertIsNone(self._reason("Europa", 8, "Disabled"))
-        self.assertIsNone(self._reason("Athens", 8, "Autocorrelation"))
+        """The same type with None dependency tracking has a library."""
+        self.assertIsNone(self._reason("Europa", 8, "None"))
+        self.assertIsNone(self._reason("Athens", 8, "Basic"))
 
     def test_the_applications_config_mk_is_read_first(self) -> None:
         """
@@ -126,8 +132,8 @@ class TestConfigurationSkipReason(unittest.TestCase):
             "PRECISION = single-precision\n"
         )
 
-        self.assertIsNone(self._reason("Europa", 8, "Autocorrelation"))
-        self.assertIsNotNone(self._reason("Europa", 8, "Disabled"))
+        self.assertIsNone(self._reason("Europa", 8, "Basic"))
+        self.assertIsNotNone(self._reason("Europa", 8, "None"))
 
     def test_inherited_make_flags_do_not_change_the_answer(self) -> None:
         """
@@ -135,17 +141,67 @@ class TestConfigurationSkipReason(unittest.TestCase):
         there, make would print the echo command instead of the library.
         """
         with mock.patch.dict(os.environ, {"MAKEFLAGS": "n"}):
-            self.assertIsNone(self._reason("Europa", 8, "Disabled"))
+            self.assertIsNone(self._reason("Europa", 8, "None"))
+
+    def _rome(self) -> str:
+        """
+        Ask what the fake SDK builds Rome as.
+
+        Returns:
+            ``Rome`` or ``Atlas``.
+        """
+        with contextlib.redirect_stderr(io.StringIO()):
+            return sdk_representation_type(
+                representation_type="Rome",
+                path_to_application=str(self.application),
+                path_to_uxhw_sdk=str(self.sdk),
+            )
+
+    def test_an_sdk_without_rome_builds_it_as_atlas(self) -> None:
+        self.assertEqual(self._rome(), "Atlas")
+
+    def test_an_sdk_with_rome_in_this_machines_directory_builds_rome(self) -> None:
+        (self.sdk / "lib" / "double-precision" / "libuxhw_runtime_Rome_8.a").touch()
+
+        self.assertEqual(self._rome(), "Rome")
+
+    def test_rome_in_another_directory_does_not_count(self) -> None:
+        """
+        A Rome library this machine's build would not link, here a
+        single-precision one, leaves Rome built as Atlas.
+        """
+        (self.sdk / "lib" / "single-precision" / "libuxhw_runtime_Rome_8.a").touch()
+
+        self.assertEqual(self._rome(), "Atlas")
+
+    def test_other_types_are_not_looked_up(self) -> None:
+        shutil.rmtree(self.sdk / "include")
+
+        self.assertEqual(
+            sdk_representation_type(
+                representation_type="Europa",
+                path_to_application=str(self.application),
+                path_to_uxhw_sdk=str(self.sdk),
+            ),
+            "Europa",
+        )
+
+    def test_an_sdk_that_cannot_be_asked_about_rome_is_an_error(self) -> None:
+        """A wrong SDK path fails loudly rather than renaming Rome."""
+        shutil.rmtree(self.sdk / "include")
+
+        with self.assertRaises(RuntimeError):
+            self._rome()
 
     def test_jupiter_above_the_limit_is_skipped_as_a_memory_guard(self) -> None:
         """The memory guard applies before the SDK is asked anything."""
-        reason = self._reason("Jupiter", 64, "Disabled", max_jupiter_size=32)
+        reason = self._reason("Jupiter", 64, "None", max_jupiter_size=32)
 
         self.assertIn("--max-jupiter-size 32", reason or "")
 
     def test_jupiter_within_the_limit_is_judged_by_its_library(self) -> None:
         """Jupiter has no special case beyond the memory guard."""
-        reason = self._reason("Jupiter", 8, "Disabled", max_jupiter_size=32)
+        reason = self._reason("Jupiter", 8, "None", max_jupiter_size=32)
 
         self.assertIn("libuxhw_runtime_Jupiter_8.a", reason or "")
 
@@ -154,9 +210,9 @@ class TestConfigurationSkipReason(unittest.TestCase):
         shutil.rmtree(self.sdk / "include")
 
         with self.assertRaises(RuntimeError) as caught:
-            self._reason("Europa", 8, "Autocorrelation")
+            self._reason("Europa", 8, "Basic")
 
-        self.assertIn("Europa-8-Autocorrelation", str(caught.exception))
+        self.assertIn("Europa-8-Basic", str(caught.exception))
 
 
 if __name__ == "__main__":

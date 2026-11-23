@@ -23,7 +23,7 @@ from signaloid_benchmarking.config import (
     RepresentationTypes,
     DistanceMetrics,
     ReportingMethods,
-    Correlations,
+    DependencyTracking,
     DEFAULT_UXHW_SDK_PATH,
     DEFAULT_CLI_HELPERS_PATH,
     DEFAULT_GROUND_TRUTH_SIZE,
@@ -39,14 +39,25 @@ from signaloid_benchmarking.config import (
 # values, which argparse does not check) share one source.
 REPRESENTATION_TYPE_CHOICES = [
     RepresentationTypes.ATHENS,
-    RepresentationTypes.ATLAS,
+    RepresentationTypes.ROME,
     RepresentationTypes.JUPITER,
     RepresentationTypes.EUROPA,
+    RepresentationTypes.MERCURY,
 ]
-CORRELATION_CHOICES = [
-    Correlations.DISABLED,
-    Correlations.AUTOCORRELATION,
+DEPENDENCY_TRACKING_CHOICES = [
+    DependencyTracking.NONE,
+    DependencyTracking.BASIC,
+    DependencyTracking.ADVANCED,
 ]
+# The command line also takes the earlier names. They are translated once
+# the representation types are known, since Disabled means Advanced for
+# Jupiter, Europa, and Mercury. See translate_earlier_names.
+_DEPENDENCY_TRACKING_INPUTS = DEPENDENCY_TRACKING_CHOICES + list(
+    DependencyTracking.FROM_EARLIER_NAME
+)
+
+# The config-file key that ``dependency_tracking`` had before the rename.
+EARLIER_DEPENDENCY_TRACKING_KEY = "correlations"
 REPORTING_METHOD_CHOICES = [
     ReportingMethods.MEAN,
     ReportingMethods.QUANTILE_95,
@@ -106,9 +117,12 @@ def create_argument_parser() -> ArgumentParser:
         "--representation-types",
         dest="representation_types",
         choices=REPRESENTATION_TYPE_CHOICES,
-        type=str,
+        type=RepresentationTypes.from_earlier_name,
         nargs="+",
-        help="Uncertain representation types to evaluate.",
+        help=(
+            "Uncertain representation types to evaluate. Atlas, the earlier "
+            "name of Rome, is also accepted."
+        ),
     )
 
     parser.add_argument(
@@ -121,13 +135,21 @@ def create_argument_parser() -> ArgumentParser:
     )
 
     parser.add_argument(
+        "-d",
+        "--dependency-tracking",
         "-c",
         "--uncertainty-correlation_types",
-        dest="correlations",
-        type=str,
-        choices=CORRELATION_CHOICES,
+        dest="dependency_tracking",
+        choices=_DEPENDENCY_TRACKING_INPUTS,
+        metavar="{" + ",".join(DEPENDENCY_TRACKING_CHOICES) + "}",
         nargs="+",
-        help="Uncertain representation correlations to evaluate",
+        help=(
+            "Dependency tracking modes to evaluate. Athens and Rome take None "
+            "and Basic. Jupiter, Europa, and Mercury take Advanced only. "
+            "-c, --uncertainty-correlation_types, Disabled, and "
+            "Autocorrelation are the earlier names, still accepted. Disabled "
+            "means Advanced for Jupiter, Europa, and Mercury."
+        ),
     )
 
     parser.add_argument(
@@ -249,12 +271,13 @@ def create_argument_parser() -> ArgumentParser:
     parser.add_argument(
         "--use-clt",
         dest="use_clt",
-        action="store_true",
-        default=False,
+        action=BooleanOptionalAction,
+        default=True,
         help=(
             "Estimate the equivalent Monte Carlo count from the asymptotic "
             "(CLT / Brownian-bridge) distance distribution instead of "
-            "measuring it via explicit adversary MC simulation."
+            "measuring it via explicit adversary MC simulation. Pass "
+            "--no-use-clt (or set use_clt: false in a config) to disable."
         ),
     )
 
@@ -391,6 +414,39 @@ def create_argument_parser() -> ArgumentParser:
     return parser
 
 
+def translate_earlier_names(args: Namespace) -> None:
+    """
+    Replace earlier representation type and dependency tracking names.
+
+    The command line translates the type names as it parses, but a
+    configuration file sets its values directly. Dependency tracking is
+    translated for the requested types, since ``Disabled`` means
+    ``Advanced`` for Jupiter, Europa, and Mercury. A name given twice,
+    such as Atlas and Rome, is kept once.
+
+    Args:
+        args: The parsed and config-merged arguments, changed in place.
+    """
+    types = getattr(args, "representation_types", None)
+    if isinstance(types, list):
+        args.representation_types = list(
+            dict.fromkeys(
+                (
+                    RepresentationTypes.from_earlier_name(value)
+                    if isinstance(value, str)
+                    else value
+                )
+                for value in types
+            )
+        )
+    modes = getattr(args, "dependency_tracking", None)
+    if isinstance(modes, list) and all(isinstance(mode, str) for mode in modes):
+        args.dependency_tracking = DependencyTracking.from_earlier_names(
+            modes,
+            [kind for kind in args.representation_types or [] if isinstance(kind, str)],
+        )
+
+
 def _validate_sweep_args(args: Namespace) -> None:
     """Validate the four sweep args after the config layer has merged.
 
@@ -404,15 +460,15 @@ def _validate_sweep_args(args: Namespace) -> None:
     required_sweep_args = {
         "representation_types": REPRESENTATION_TYPE_CHOICES,
         "representation_sizes": None,
-        "correlations": CORRELATION_CHOICES,
+        "dependency_tracking": DEPENDENCY_TRACKING_CHOICES,
         "reporting_methods": REPORTING_METHOD_CHOICES,
     }
     for dest, allowed in required_sweep_args.items():
         values = getattr(args, dest, None)
         if values is None:
             raise ValueError(
-                f"Error! '{dest}' must be provided via the CLI or a "
-                "--config file (it has no default)."
+                f"'{dest}' has no default. Set it on the command line or in "
+                "a --config file."
             )
         validate_sweep_values(
             label=f"'{dest}'",
@@ -451,22 +507,22 @@ def validate_sweep_values(
     """
     if not isinstance(values, list) or len(values) == 0:
         raise ValueError(
-            f"Error! {label} must be a non-empty list (a YAML list "
-            f"or CLI nargs), got {type(values).__name__}."
+            f"{label} must be a non-empty list, given as a YAML list or as "
+            f"values after the flag. It is a {type(values).__name__}."
         )
     # bool is a subclass of int, and YAML reads a bare true or false as one,
     # so it is refused explicitly rather than reaching a build as a size.
     if integers_only and any(
         not isinstance(value, int) or isinstance(value, bool) for value in values
     ):
-        raise ValueError(f"Error! {label} must contain only integers, got {values}.")
+        raise ValueError(f"{label} must contain only integers. It is {values}.")
     if allowed is None:
         return
     invalid = [value for value in values if value not in allowed]
     if invalid:
         raise ValueError(
-            f"Error! {label} contains invalid values {invalid}. "
-            f"Allowed values are {allowed}."
+            f"{label} contains {invalid}, which are not allowed. "
+            f"Use values from {allowed}."
         )
 
 
@@ -489,7 +545,7 @@ def validate_args(args: Namespace) -> None:
     # non-positive max_workers and crash deep in the run.
     if args.num_parallel_workers is not None and args.num_parallel_workers < 1:
         raise ValueError(
-            "Error! -j/--jobs/--num-parallel-workers must be >= 1, got "
+            "-j/--jobs/--num-parallel-workers must be >= 1. It is "
             f"{args.num_parallel_workers}."
         )
 
@@ -498,18 +554,25 @@ def validate_args(args: Namespace) -> None:
     # Analytic ground truth means utilizing weighted samples
     if args.has_analytic_ground_truth:
         if args.ground_truth_type != RepresentationTypes.WEIGHTED_SAMPLES:
-            raise ValueError("Error! Analytic ground truth must have weighted samples.")
+            raise ValueError(
+                "An analytic ground truth is stored as weighted samples, so "
+                "--has-analytic-ground-truth needs --ground-truth-type "
+                f"{RepresentationTypes.WEIGHTED_SAMPLES}. It is "
+                f"{args.ground_truth_type}."
+            )
 
     if args.use_binned_uxhw and (args.distance_type != DistanceMetrics.WASSERSTEIN_1):
         raise ValueError(
-            "Error! Binned distance computations only supported"
-            f" for {DistanceMetrics.WASSERSTEIN_1}."
+            "Binned distance needs --distance-type "
+            f"{DistanceMetrics.WASSERSTEIN_1}, so --use-binned-uxhw cannot be "
+            f"used with {args.distance_type}."
         )
 
     # The Wasserstein-2 limit of del Barrio, Giné and Utzet (2005) only exists
     # for light-tailed ground truths, so no EMCC prediction is made for it.
     if args.use_clt and (args.distance_type != DistanceMetrics.WASSERSTEIN_1):
         raise ValueError(
-            f"Error! --use-clt needs {DistanceMetrics.WASSERSTEIN_1}."
-            f" No CLT prediction exists for {args.distance_type}."
+            f"--use-clt needs --distance-type {DistanceMetrics.WASSERSTEIN_1}."
+            f" No CLT prediction exists for {args.distance_type}, so pass"
+            " --no-use-clt."
         )

@@ -50,11 +50,14 @@ from pathlib import Path
 from typing import Callable
 
 from signaloid_benchmarking.automation.arguments import (
-    CORRELATION_CHOICES,
+    DEPENDENCY_TRACKING_CHOICES,
     REPRESENTATION_TYPE_CHOICES,
 )
+
+from signaloid_benchmarking.automation.build import sdk_representation_type
 from signaloid_benchmarking.config import (
-    Correlations,
+    DependencyTracking,
+    RepresentationTypes,
     configuration_string,
     get_resources_dir,
 )
@@ -309,7 +312,7 @@ def build_binary(
     pool_size: int,
     representation_type: str,
     representation_size: int,
-    correlation: str,
+    dependency_tracking: str,
     program_name: str,
     make_jobs: int,
 ) -> Path:
@@ -323,9 +326,11 @@ def build_binary(
         source_directory: The demo's ``src`` directory.
         pool_size: Starting pool size, passed as
             ``UNCERTAIN_MEMORY_POOL_SIZE``.
-        representation_type: For example ``Jupiter``.
+        representation_type: As the SDK names it, for example ``Atlas``
+            for Rome on an SDK from before the rename.
         representation_size: For example ``8``.
-        correlation: ``Disabled`` or ``Autocorrelation``.
+        dependency_tracking: ``None``, ``Basic``, or ``Advanced``. The
+            SDK gets its earlier name.
         program_name: Output name for the built executable.
         make_jobs: Parallelism for the build.
 
@@ -340,7 +345,8 @@ def build_binary(
     variables = [
         f"REPRESENTATION_TYPE={representation_type}",
         f"REPRESENTATION_SIZE={representation_size}",
-        f"CORRELATION_TRACKING={correlation}",
+        # The SDK's own make variable, under its earlier name.
+        f"CORRELATION_TRACKING={DependencyTracking.to_sdk(dependency_tracking)}",
         f"UNCERTAIN_MEMORY_POOL_SIZE={pool_size}",
         f"M_CONFIG_FILE={_M_CONFIG_FILE}",
         f"TARGET_ARCH={_TARGET_ARCH}",
@@ -414,10 +420,11 @@ def profile_configuration(
     path_to_uxhw_sdk: str,
     representation_type: str,
     representation_size: int,
-    correlation: str,
+    dependency_tracking: str,
     demo_cli_args: str,
     make_jobs: int,
     start_size: int,
+    sdk_representation_type: str | None = None,
 ) -> dict:
     """
     Profile one configuration end to end.
@@ -427,10 +434,13 @@ def profile_configuration(
         path_to_uxhw_sdk: Path to the UxHw SDK to build against.
         representation_type: For example ``Jupiter``.
         representation_size: For example ``8``.
-        correlation: ``Disabled`` or ``Autocorrelation``.
+        dependency_tracking: ``None``, ``Basic``, or ``Advanced``.
         demo_cli_args: Extra arguments for the demo, as one string.
         make_jobs: Build parallelism.
         start_size: Starting pool size of the first probe.
+        sdk_representation_type: The type as the SDK builds it, for
+            example ``Atlas`` for Rome on an SDK from before the rename.
+            ``representation_type`` when omitted.
 
     Returns:
         The result record, ready to serialise.
@@ -442,7 +452,7 @@ def profile_configuration(
     configuration = configuration_string(
         representation_type=representation_type,
         representation_size=representation_size,
-        correlation=correlation,
+        dependency_tracking=dependency_tracking,
     )
     # Named per configuration so a finished build is identifiable, not as
     # any concurrency guarantee. Every probe runs make clean in the shared
@@ -455,9 +465,9 @@ def profile_configuration(
         executable = build_binary(
             source_directory=source_directory,
             pool_size=pool_size,
-            representation_type=representation_type,
+            representation_type=sdk_representation_type or representation_type,
             representation_size=representation_size,
-            correlation=correlation,
+            dependency_tracking=dependency_tracking,
             program_name=program_name,
             make_jobs=make_jobs,
         )
@@ -477,7 +487,7 @@ def profile_configuration(
         "configuration": configuration,
         "representation_type": representation_type,
         "representation_size": representation_size,
-        "correlation": correlation,
+        "dependency_tracking": dependency_tracking,
         "demo_command_line_arguments": demo_cli_args,
         "peak_uncertain_memory_pool_elements": peak_elements,
         "probes_taken": probes,
@@ -540,8 +550,12 @@ def create_argument_parser() -> argparse.ArgumentParser:
         "--representation-type",
         dest="representation_type",
         required=True,
+        type=RepresentationTypes.from_earlier_name,
         choices=REPRESENTATION_TYPE_CHOICES,
-        help="Representation type to profile.",
+        help=(
+            "Representation type to profile. Atlas, the earlier name of "
+            "Rome, is also accepted."
+        ),
     )
     parser.add_argument(
         "--representation-size",
@@ -551,13 +565,21 @@ def create_argument_parser() -> argparse.ArgumentParser:
         help="Representation size to profile.",
     )
     parser.add_argument(
+        "-d",
+        "--dependency-tracking",
         "--correlation",
-        dest="correlation",
-        default=Correlations.DISABLED,
-        choices=CORRELATION_CHOICES,
+        dest="dependency_tracking",
+        default=None,
+        choices=DEPENDENCY_TRACKING_CHOICES
+        + list(DependencyTracking.FROM_EARLIER_NAME),
+        metavar="{" + ",".join(DEPENDENCY_TRACKING_CHOICES) + "}",
         help=(
-            "Correlation tracking mode. Tracking correlations needs state "
-            "that disabling them does not, so this is its own axis."
+            "Dependency tracking mode. Tracking dependence needs state that "
+            "no tracking does not, so this is its own axis. Defaults to "
+            "Advanced for Jupiter, Europa, and Mercury, and to None "
+            "otherwise. --correlation, Disabled, and Autocorrelation are "
+            "the earlier names, still accepted. Disabled means Advanced "
+            "for Jupiter, Europa, and Mercury."
         ),
     )
     parser.add_argument(
@@ -615,16 +637,46 @@ def main() -> None:
         )
         raise SystemExit(1)
 
+    # Disabled, an earlier name, means Advanced for an Advanced type.
+    if args.dependency_tracking is not None:
+        (args.dependency_tracking,) = DependencyTracking.from_earlier_names(
+            [args.dependency_tracking], [args.representation_type]
+        )
+    if args.dependency_tracking is None:
+        args.dependency_tracking = (
+            DependencyTracking.ADVANCED
+            if args.representation_type in DependencyTracking.ADVANCED_TYPES
+            else DependencyTracking.NONE
+        )
+    reason = DependencyTracking.skip_reason(
+        args.representation_type, args.dependency_tracking
+    )
+    if reason is not None:
+        print(f"signaloid-memory-profile: {reason}", file=sys.stderr)
+        raise SystemExit(1)
+
+    # An SDK from before the Rome rename builds Rome as Atlas.
+    try:
+        sdk_type = sdk_representation_type(
+            representation_type=args.representation_type,
+            path_to_application=str(source_directory.parent),
+            path_to_uxhw_sdk=args.path_to_uxhw_sdk,
+        )
+    except RuntimeError as error:
+        print(f"signaloid-memory-profile: {error}", file=sys.stderr)
+        raise SystemExit(1) from error
+
     try:
         record = profile_configuration(
             source_directory=source_directory,
             path_to_uxhw_sdk=args.path_to_uxhw_sdk,
             representation_type=args.representation_type,
             representation_size=args.representation_size,
-            correlation=args.correlation,
+            dependency_tracking=args.dependency_tracking,
             demo_cli_args=args.demo_cli_args,
             make_jobs=args.make_jobs,
             start_size=args.start_pool_size,
+            sdk_representation_type=sdk_type,
         )
     except ProfileError as error:
         print(f"signaloid-memory-profile: {error}", file=sys.stderr)

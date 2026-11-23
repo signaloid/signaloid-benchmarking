@@ -37,7 +37,7 @@ META uxhwSdkVersion v4.5.6
 META commandLineArguments -T 100 --strike 110
 META commandLineArgumentsHash abc123
 META uxhwTargetRepetitions 20
-MEASUREMENT Athens-16-Autocorrelation 1.23 4.56 7.89 1000 2000
+MEASUREMENT Athens-16-Basic 1.23 4.56 7.89 1000 2000
 MEASUREMENT Athens-16 1.01 4.02 7.03 950 ?
 MEASUREMENT Reference-50-1 0.5 1.0 1.5 100 ?
 MEASUREMENT Native-50-1 0.6 ? 1.7 ? ?
@@ -87,7 +87,7 @@ class TestParseTimingIntermediateStream(unittest.TestCase):
         runs = parse_timing_intermediate_stream(UXHW_RUN.splitlines())
         first = runs[0][TimingFormat.JSON_KEY_MEASUREMENTS][0]
         self.assertEqual(
-            first[TimingFormat.JSON_KEY_MEASUREMENT_CONFIG], "Athens-16-Autocorrelation"
+            first[TimingFormat.JSON_KEY_MEASUREMENT_CONFIG], "Athens-16-Basic"
         )
         self.assertEqual(first[TimingFormat.JSON_KEY_MEASUREMENT_TIME], 1.23)
         self.assertEqual(first[TimingFormat.JSON_KEY_MEASUREMENT_DB_TIME], 4.56)
@@ -448,10 +448,10 @@ class TestSampleDatabaseTime(unittest.TestCase):
         """
         fixture = """\
 META timestamp 2026-04-15T14:30:00Z
-SAMPLE Athens-16-Autocorrelation databaseTime 0 1.0
-SAMPLE Athens-16-Autocorrelation databaseTime 1 2.0
-SAMPLE Athens-16-Autocorrelation databaseTime 2 3.0
-MEASUREMENT Athens-16-Autocorrelation 5.0 ? 7.0 100 200
+SAMPLE Athens-16-Basic databaseTime 0 1.0
+SAMPLE Athens-16-Basic databaseTime 1 2.0
+SAMPLE Athens-16-Basic databaseTime 2 3.0
+MEASUREMENT Athens-16-Basic 5.0 ? 7.0 100 200
 """
         runs = parse_timing_intermediate_stream(fixture.splitlines())
         measurement = runs[0][TimingFormat.JSON_KEY_MEASUREMENTS][0]
@@ -495,10 +495,10 @@ class TestSampleDatabaseDynInstCount(unittest.TestCase):
         """
         fixture = """\
 META timestamp 2026-04-15T14:30:00Z
-SAMPLE Athens-16-Autocorrelation databaseDynInstCount 0 100
-SAMPLE Athens-16-Autocorrelation databaseDynInstCount 1 200
-SAMPLE Athens-16-Autocorrelation databaseDynInstCount 2 300
-MEASUREMENT Athens-16-Autocorrelation 5.0 4.0 7.0 ? 500
+SAMPLE Athens-16-Basic databaseDynInstCount 0 100
+SAMPLE Athens-16-Basic databaseDynInstCount 1 200
+SAMPLE Athens-16-Basic databaseDynInstCount 2 300
+MEASUREMENT Athens-16-Basic 5.0 4.0 7.0 ? 500
 """
         runs = parse_timing_intermediate_stream(fixture.splitlines())
         measurement = runs[0][TimingFormat.JSON_KEY_MEASUREMENTS][0]

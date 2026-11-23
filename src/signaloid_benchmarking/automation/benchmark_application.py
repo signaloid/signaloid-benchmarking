@@ -40,9 +40,12 @@ from signaloid_benchmarking.automation.analysis import (
     load_emcc_data,
 )
 from signaloid_benchmarking.automation.arguments import (
+    EARLIER_DEPENDENCY_TRACKING_KEY,
     create_argument_parser,
+    translate_earlier_names,
     validate_args,
 )
+from signaloid_benchmarking.config import DependencyTracking
 from signaloid_benchmarking.automation.database_generator import (
     generate_adversary_database,
     generate_ground_truth_database,
@@ -176,6 +179,12 @@ def load_config(parser: ArgumentParser) -> Namespace:
                 "Config file must contain a YAML mapping (key/value "
                 f"pairs) at the top level, got {type(file_config).__name__}."
             )
+        # The earlier name of the dependency_tracking key.
+        if EARLIER_DEPENDENCY_TRACKING_KEY in file_config:
+            file_config.setdefault(
+                "dependency_tracking",
+                file_config.pop(EARLIER_DEPENDENCY_TRACKING_KEY),
+            )
         known_dests = {action.dest for action in parser._actions} - {"help"}
         unknown_keys = set(file_config) - known_dests
         if unknown_keys:
@@ -184,7 +193,9 @@ def load_config(parser: ArgumentParser) -> Namespace:
                 f"Known keys are {sorted(known_dests)}."
             )
         parser.set_defaults(**file_config)
-    return parser.parse_args()
+    args = parser.parse_args()
+    translate_earlier_names(args)
+    return args
 
 
 def _print_effective_config(args: Namespace) -> None:
@@ -201,34 +212,43 @@ def _print_effective_config(args: Namespace) -> None:
     for dest in sorted(vars(args)):
         print(f"  {dest}: {getattr(args, dest)}")
 
+    # A type that does not take a dependency tracking mode, such as Athens
+    # with Advanced, is left out, as the run skips it.
     matrix = [
-        (representation_type, representation_size, correlation, reporting_method)
+        (
+            representation_type,
+            representation_size,
+            dependency_tracking,
+            reporting_method,
+        )
         for representation_type in args.representation_types
         for representation_size in args.representation_sizes
-        for correlation in args.correlations
+        for dependency_tracking in args.dependency_tracking
         for reporting_method in args.reporting_methods
+        if DependencyTracking.skip_reason(representation_type, dependency_tracking)
+        is None
     ]
     print(
         "\nBenchmark matrix "
-        "(representation_type x representation_size x correlation x "
+        "(representation_type x representation_size x dependency_tracking x "
         f"reporting_method): {len(matrix)} combinations:"
     )
     for (
         representation_type,
         representation_size,
-        correlation,
+        dependency_tracking,
         reporting_method,
     ) in matrix:
         print(
             f"  {representation_type} | size={representation_size} | "
-            f"{correlation} | {reporting_method}"
+            f"{dependency_tracking} | {reporting_method}"
         )
     # signaloid.yaml is read only once the pipeline starts, so this matrix
     # cannot reflect a variable that declares its own.
     print(
         "\nThis is the run-wide matrix. A benchmarking variable in "
         "signaloid.yaml that declares RepresentationTypes, "
-        "RepresentationSizes or CorrelationTracking is measured on its own "
+        "RepresentationSizes or DependencyTracking is measured on its own "
         "values instead."
     )
 
@@ -265,7 +285,7 @@ def main() -> None:
             f.write(f"Arguments: {vars(args)}\n\n")
             traceback.print_exc(file=f)
 
-        print(f"\nError: pipeline failed. " f"Full traceback written to {log_file}")
+        print(f"\nThe pipeline failed. The full traceback is in {log_file}.")
         traceback.print_exc()
         sys.exit(1)
 
@@ -294,7 +314,7 @@ def _run_pipeline(args: Namespace, *, credentials_path: str | None) -> None:
         representation_types=(args.representation_types),
         representation_sizes=(args.representation_sizes),
         reporting_methods=args.reporting_methods,
-        correlations=args.correlations,
+        dependency_tracking_modes=args.dependency_tracking,
         max_num_weighted_samples=(args.max_num_weighted_samples),
         num_parallel_workers=(args.num_parallel_workers),
         n_adversaries=args.n_adversaries,
@@ -356,7 +376,7 @@ def _run_pipeline(args: Namespace, *, credentials_path: str | None) -> None:
             tracing_db_path=benchmark.tracing_db_path,
             representation_types=benchmark.representation_types,
             representation_sizes=benchmark.representation_sizes,
-            correlations=benchmark.correlations,
+            dependency_tracking_modes=benchmark.dependency_tracking_modes,
         )
     else:
         generate_uxhw_tracing_database(
@@ -394,7 +414,7 @@ def _run_pipeline(args: Namespace, *, credentials_path: str | None) -> None:
         tracing_db_path=benchmark.tracing_db_path,
         representation_types=benchmark.representation_types,
         representation_sizes=benchmark.representation_sizes,
-        correlations=benchmark.correlations,
+        dependency_tracking_modes=benchmark.dependency_tracking_modes,
         uxhw_distance_file=benchmark.uxhw_distance_file,
     )
 
@@ -440,7 +460,7 @@ def _run_pipeline(args: Namespace, *, credentials_path: str | None) -> None:
         tracing_db_path=benchmark.tracing_db_path,
         representation_types=benchmark.representation_types,
         representation_sizes=benchmark.representation_sizes,
-        correlations=benchmark.correlations,
+        dependency_tracking_modes=benchmark.dependency_tracking_modes,
         num_parallel_workers=benchmark.num_parallel_workers,
         n_adversaries=benchmark.n_adversaries,
         distance_type=benchmark.distance_type,
@@ -490,7 +510,7 @@ def _run_pipeline(args: Namespace, *, credentials_path: str | None) -> None:
         demo_cli_args=benchmark.demo_cli_args,
         representation_sizes=benchmark.representation_sizes,
         representation_types=benchmark.representation_types,
-        correlations=benchmark.correlations,
+        dependency_tracking_modes=benchmark.dependency_tracking_modes,
     )
 
     # Load equivalent MC timing data from native executions. emcc_data is

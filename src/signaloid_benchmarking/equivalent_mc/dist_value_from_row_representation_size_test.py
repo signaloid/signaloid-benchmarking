@@ -60,7 +60,7 @@ def _make_row(
     ur_order: int,
     ur_order_core_library: int,
     ur_type_str: str = "Athens",
-    correlation_tracking: str = "Independent",
+    dependency_tracking: str = "Independent",
     value_id: str = "v0",
     particle_value: float = 0.0,
 ) -> pd.Series:
@@ -73,7 +73,7 @@ def _make_row(
             "UR_Type": ur_type_str,
             "UR_Order": ur_order,
             "UR_Order_CoreLibrary": ur_order_core_library,
-            "CorrelationTracking_Status": correlation_tracking,
+            "CorrelationTracking_Status": dependency_tracking,
             "ValueId": value_id,
             "Particle_Value": particle_value,
         }
@@ -171,6 +171,43 @@ class TestDistValueFromRowRepresentationSize(unittest.TestCase):
                 row = _build_collapsed_scalar_ttr_row(n)
                 tagged = _dist_value_from_row(row)
                 self.assertEqual(tagged.representation_size, n)
+
+
+class TestDistValueFromRowDependencyTracking(unittest.TestCase):
+    """The correlation tracking names the SDK writes become dependency tracking."""
+
+    def test_sdk_names_become_the_current_ones(self) -> None:
+        for written, expected in (
+            ("OFF", "None"),
+            ("Common Ancestor", "Basic"),
+            ("Disabled", "None"),
+            ("Autocorrelation", "Basic"),
+            ("None", "None"),
+            ("Basic", "Basic"),
+        ):
+            with self.subTest(written=written):
+                row = _build_uxhw_ttr_row(4)
+                row["CorrelationTracking_Status"] = written
+                tagged = _dist_value_from_row(row)
+                self.assertEqual(tagged.dependency_tracking, expected)
+
+    def test_an_advanced_type_is_advanced_whatever_the_sdk_wrote(self) -> None:
+        for written in ("Disabled", "OFF", "Advanced"):
+            with self.subTest(written=written):
+                row = _build_uxhw_ttr_row(4)
+                row["UR_Type"] = "Jupiter"
+                row["CorrelationTracking_Status"] = written
+                tagged = _dist_value_from_row(row)
+                self.assertEqual(tagged.dependency_tracking, "Advanced")
+                self.assertEqual(repr(tagged), "Jupiter-7-Advanced")
+
+    def test_atlas_is_read_as_rome(self) -> None:
+        row = _build_uxhw_ttr_row(4)
+        row["UR_Type"] = "Atlas"
+        row["CorrelationTracking_Status"] = "Autocorrelation"
+        tagged = _dist_value_from_row(row)
+        self.assertEqual(tagged.representation_type, "Rome")
+        self.assertEqual(repr(tagged), "Rome-7-Basic")
 
 
 if __name__ == "__main__":

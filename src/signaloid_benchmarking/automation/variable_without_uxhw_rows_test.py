@@ -128,7 +128,7 @@ class TestComputeEquivalentMc(unittest.TestCase):
                 tracing_db_path="unused.db",
                 representation_types=["Athens"],
                 representation_sizes=[8],
-                correlations=["Disabled"],
+                dependency_tracking_modes=["None"],
                 num_parallel_workers=1,
                 n_adversaries=1,
                 distance_type="Wasserstein-1",

@@ -25,7 +25,10 @@ from dataclasses import dataclass
 import numpy as np
 
 from signaloid.distributional.distributional import DistributionalValue
-from signaloid_benchmarking.config import STRING_TO_CORE_REPRESENTATION
+from signaloid_benchmarking.config import (
+    STRING_TO_CORE_REPRESENTATION,
+    RepresentationTypes,
+)
 
 gaussianMotherTTR4Positions = [
     -1.3657612687884203,
@@ -1256,7 +1259,7 @@ class SyntheticUxhwConfig:
 
     ur_type: str
     ur_order: int
-    correlation: str  # "Disabled" or "Autocorrelation"
+    dependency_tracking: str  # As the SDK records it, e.g. "Disabled"
 
     @property
     def ur_order_core_library(self) -> int:
@@ -1287,7 +1290,10 @@ def gaussian_ux_string(centre: float, scale: float, n_atoms: int, ur_type: str) 
     masses = np.exp(-0.5 * ((positions - centre) / scale) ** 2)
     masses = masses / masses.sum()
     distribution = DistributionalValue.from_weighted_samples(positions, masses)
-    distribution.UR_type = STRING_TO_CORE_REPRESENTATION[ur_type]
+    # The SDK may record a type under an earlier name, such as Atlas for Rome.
+    distribution.UR_type = STRING_TO_CORE_REPRESENTATION[
+        RepresentationTypes.from_uxhw_db(ur_type)
+    ]
     return str(distribution)
 
 
@@ -1358,7 +1364,7 @@ def build_uxhw_database(
                     config.ur_type,
                     config.ur_order,
                     config.ur_order_core_library,
-                    config.correlation,
+                    config.dependency_tracking,
                     0.0,
                     0,
                 ),

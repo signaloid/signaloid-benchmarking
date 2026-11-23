@@ -54,43 +54,61 @@ class CoreLibraryRepresentationTypes(Enum):
     benchmarked representation types plus ``NoUncertaintyTracking``.
 
     The integer values mirror the core library and must not be renumbered.
+    The core library still calls Rome by its earlier name, Atlas.
     """
 
     ATHENS = 4
     JUPITER = 6
-    ATLAS = 7
+    ROME = 7
     EUROPA = 8
     NO_UNCERTAINTY_TRACKING = 9
+    MERCURY = 10
 
 
 class RepresentationTypes:
     """
     String names for the representation types used across benchmarking: the
-    core-library types (Athens, Jupiter, Atlas, Europa) and the
+    core-library types (Athens, Rome, Jupiter, Europa, Mercury) and the
     Monte-Carlo / ground-truth types (WeightedSamples, Samples, MonteCarlo).
     """
 
     # Representation types supported by the core library and benchmarked here.
     ATHENS = "Athens"
+    ROME = "Rome"
     JUPITER = "Jupiter"
-    ATLAS = "Atlas"
     EUROPA = "Europa"
+    MERCURY = "Mercury"
 
-    # The UxHw SDK writes the canonical representation strings
-    # ("Athens"/"Atlas"/"Jupiter"/"Europa") directly to the DB UR_Type
-    # column, so no name translation is needed and these maps stay empty.
-    TO_UXHW_DB: dict[str, str] = {}
-    FROM_UXHW_DB = {v: k for k, v in TO_UXHW_DB.items()}
+    # Rome was called Atlas. The earlier name is still accepted as input,
+    # and SDKs without Rome runtime libraries still build and record Rome
+    # as Atlas. See ``sdk_representation_type`` in build.py.
+    ATLAS = "Atlas"
+    FROM_EARLIER_NAME = {ATLAS: ROME}
 
     @classmethod
-    def to_uxhw_db(cls, rep_type: str) -> str:
-        """Convert a representation type to its UxHw Database name."""
-        return cls.TO_UXHW_DB.get(rep_type, rep_type)
+    def from_earlier_name(cls, name: str) -> str:
+        """Translate an earlier representation type name to the current one."""
+        return cls.FROM_EARLIER_NAME.get(name, name)
+
+    @classmethod
+    def to_uxhw_db(cls, rep_type: str) -> list[str]:
+        """
+        Name every way a UxHw database may record a representation type.
+
+        A database written by an SDK from before the rename records Rome as
+        Atlas, and a later one records it as Rome.
+        """
+        earlier_names = [
+            earlier
+            for earlier, current in cls.FROM_EARLIER_NAME.items()
+            if current == rep_type
+        ]
+        return [rep_type, *earlier_names]
 
     @classmethod
     def from_uxhw_db(cls, uxhw_name: str) -> str:
-        """Convert a UxHw Database name back to the standard representation type."""
-        return cls.FROM_UXHW_DB.get(uxhw_name, uxhw_name)
+        """Convert a UxHw database name to the current representation type."""
+        return cls.from_earlier_name(uxhw_name)
 
     # Ground-truth / Monte-Carlo representation types.
     WEIGHTED_SAMPLES = "WeightedSamples"
@@ -101,8 +119,9 @@ class RepresentationTypes:
 CORE_TO_STRING_REPRESENTATION = {
     CoreLibraryRepresentationTypes.ATHENS.value: RepresentationTypes.ATHENS,
     CoreLibraryRepresentationTypes.JUPITER.value: RepresentationTypes.JUPITER,
-    CoreLibraryRepresentationTypes.ATLAS.value: RepresentationTypes.ATLAS,
+    CoreLibraryRepresentationTypes.ROME.value: RepresentationTypes.ROME,
     CoreLibraryRepresentationTypes.EUROPA.value: RepresentationTypes.EUROPA,
+    CoreLibraryRepresentationTypes.MERCURY.value: RepresentationTypes.MERCURY,
 }
 
 STRING_TO_CORE_REPRESENTATION = {v: k for k, v in CORE_TO_STRING_REPRESENTATION.items()}
@@ -119,9 +138,139 @@ class ReportingNumbers:
     QUANTILE_99 = 0.99
 
 
-class Correlations:
-    DISABLED = "Disabled"
-    AUTOCORRELATION = "Autocorrelation"
+class DependencyTracking:
+    """
+    How a UxHw representation tracks the dependence between values.
+
+    Athens and Rome take ``None`` or ``Basic``. Jupiter, Europa, and Mercury
+    always track dependence the advanced way, so they take ``Advanced`` only.
+
+    The UxHw SDK, its databases, and SCCE still use the earlier names, which
+    called this correlation tracking. ``None`` was ``Disabled``, and
+    ``Basic`` was ``Autocorrelation``. The SDK builds an ``Advanced`` type
+    with correlation tracking disabled.
+    """
+
+    NONE = "None"
+    BASIC = "Basic"
+    ADVANCED = "Advanced"
+
+    ADVANCED_TYPES = (
+        RepresentationTypes.JUPITER,
+        RepresentationTypes.EUROPA,
+        RepresentationTypes.MERCURY,
+    )
+
+    # The earlier names, which the SDK still takes and records.
+    SDK_DISABLED = "Disabled"
+    SDK_AUTOCORRELATION = "Autocorrelation"
+
+    # Earlier names still accepted as input.
+    FROM_EARLIER_NAME = {SDK_DISABLED: NONE, SDK_AUTOCORRELATION: BASIC}
+
+    TO_SDK = {
+        NONE: SDK_DISABLED,
+        BASIC: SDK_AUTOCORRELATION,
+        ADVANCED: SDK_DISABLED,
+    }
+
+    # SDK 8.5.0 still writes the pre-5.0 names to the DB
+    # CorrelationTracking_Status column for some representation types, such
+    # as Rome. Other types get the SDK names above.
+    FROM_PRE_5_SDK_NAME = {"OFF": SDK_DISABLED, "Common Ancestor": SDK_AUTOCORRELATION}
+
+    @classmethod
+    def from_earlier_name(cls, name: str) -> str:
+        """
+        Translate an earlier dependency tracking name to the current one.
+
+        This is the meaning for Athens and Rome. For input that may name
+        an ``Advanced`` type, use ``from_earlier_names``.
+        """
+        return cls.FROM_EARLIER_NAME.get(name, name)
+
+    @classmethod
+    def from_earlier_names(
+        cls, names: list[str], representation_types: list[str]
+    ) -> list[str]:
+        """
+        Translate earlier dependency tracking names for the types they are for.
+
+        ``Disabled`` was the only mode of Jupiter, Europa, and Mercury, and
+        it builds what ``Advanced`` builds now. So it becomes ``Advanced``
+        when an ``Advanced`` type is asked for, and ``None`` when another
+        type is. Asking for both kinds of type gives both, and each type
+        then runs only with its own. Current names are kept as they are.
+
+        Args:
+            names: The dependency tracking modes as given.
+            representation_types: The representation types they are swept
+                with, with their earlier names already translated.
+
+        Returns:
+            The current names, each once, in the order given.
+        """
+        advanced = [kind in cls.ADVANCED_TYPES for kind in representation_types]
+        translated = []
+        for name in names:
+            if name != cls.SDK_DISABLED:
+                translated.append(cls.from_earlier_name(name))
+                continue
+            if not advanced or not all(advanced):
+                translated.append(cls.NONE)
+            if any(advanced):
+                translated.append(cls.ADVANCED)
+
+        return list(dict.fromkeys(translated))
+
+    @classmethod
+    def to_sdk(cls, dependency_tracking: str) -> str:
+        """Name a dependency tracking mode the way the UxHw SDK takes it."""
+        return cls.TO_SDK[dependency_tracking]
+
+    @classmethod
+    def from_uxhw_db(cls, uxhw_name: str, representation_type: str) -> str:
+        """
+        Convert a UxHw database's correlation tracking to dependency tracking.
+
+        The SDK records an ``Advanced`` type as disabled, so the answer
+        depends on the representation type.
+
+        Args:
+            uxhw_name: The ``CorrelationTracking_Status`` value.
+            representation_type: The current name of the row's type.
+
+        Returns:
+            ``None``, ``Basic``, or ``Advanced``.
+        """
+        if representation_type in cls.ADVANCED_TYPES:
+            return cls.ADVANCED
+        sdk_name = cls.FROM_PRE_5_SDK_NAME.get(uxhw_name, uxhw_name)
+        return cls.from_earlier_name(sdk_name)
+
+    @classmethod
+    def skip_reason(
+        cls, representation_type: str, dependency_tracking: str
+    ) -> str | None:
+        """
+        Say why a type cannot run with a dependency tracking mode, if it cannot.
+
+        Args:
+            representation_type: For example ``Jupiter``.
+            dependency_tracking: For example ``Basic``.
+
+        Returns:
+            The reason, or ``None`` when the pair is valid.
+        """
+        if representation_type in cls.ADVANCED_TYPES:
+            if dependency_tracking != cls.ADVANCED:
+                return (
+                    f"{representation_type} only has {cls.ADVANCED} dependency tracking"
+                )
+            return None
+        if dependency_tracking == cls.ADVANCED:
+            return f"{representation_type} has no {cls.ADVANCED} dependency tracking"
+        return None
 
 
 class Scce:
@@ -134,10 +283,12 @@ class Scce:
     # configuration asking for any other representation type is skipped.
     MICROARCHITECTURES = (RepresentationTypes.ATHENS, RepresentationTypes.JUPITER)
 
-    # How SCCE spells a core's correlation tracking.
-    CORE_CORRELATION_TRACKING = {
-        Correlations.DISABLED: "Disable",
-        Correlations.AUTOCORRELATION: "Autocorrelation",
+    # How SCCE spells a core's correlation tracking, its name for dependency
+    # tracking.
+    CORE_DEPENDENCY_TRACKING = {
+        DependencyTracking.NONE: "Disable",
+        DependencyTracking.BASIC: "Autocorrelation",
+        DependencyTracking.ADVANCED: "Disable",
     }
 
 
@@ -188,11 +339,13 @@ class SignaloidYaml:
     OUTPUT_OBJECT = "OutputObject"
     COMMAND_LINE_ARGUMENTS = "CommandLineArguments"
     # Optional per-variable overrides. Each falls back to the matching
-    # run-wide flag, -u, -s, -c and --path-to-ground-truth-file, when a
+    # run-wide flag, -u, -s, -d and --path-to-ground-truth-file, when a
     # variable does not declare it.
     REPRESENTATION_TYPES = "RepresentationTypes"
     REPRESENTATION_SIZES = "RepresentationSizes"
-    CORRELATION_TRACKING = "CorrelationTracking"
+    DEPENDENCY_TRACKING = "DependencyTracking"
+    # The earlier name of DependencyTracking, still accepted.
+    EARLIER_DEPENDENCY_TRACKING = "CorrelationTracking"
     ANALYTIC_GROUND_TRUTH = "AnalyticGroundTruth"
 
 
@@ -417,26 +570,28 @@ def configuration_string(
     *,
     representation_type: str,
     representation_size: int,
-    correlation: str,
+    dependency_tracking: str,
 ) -> str:
     """
     Name a configuration the way the benchmarking tool names it.
 
     Matches ``uxhw_config_string`` in ``get-timings.sh``, so Python and the
-    timing layer name the same configuration identically.
+    timing layer name the same configuration identically. ``None``
+    dependency tracking is the default and adds nothing.
 
     Args:
-        representation_type: For example ``Jupiter``.
+        representation_type: For example ``Athens``.
         representation_size: For example ``8``.
-        correlation: ``Disabled`` or ``Autocorrelation``.
+        dependency_tracking: ``None``, ``Basic``, or ``Advanced``.
 
     Returns:
-        For example ``Jupiter-8`` or ``Jupiter-8-Autocorrelation``.
+        For example ``Athens-8``, ``Athens-8-Basic``, or
+        ``Jupiter-8-Advanced``.
     """
-    if correlation == Correlations.AUTOCORRELATION:
-        return f"{representation_type}-{representation_size}-{correlation}"
+    if dependency_tracking == DependencyTracking.NONE:
+        return f"{representation_type}-{representation_size}"
 
-    return f"{representation_type}-{representation_size}"
+    return f"{representation_type}-{representation_size}-{dependency_tracking}"
 
 
 def uses_binned_distance(

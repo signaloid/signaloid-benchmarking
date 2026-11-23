@@ -122,8 +122,9 @@ class EquivalentMonteCarlo:
             self.wasserstein_order = 2
         else:
             raise RuntimeError(
-                f"Invalid distance type configuration "
-                f"{distance_type}. Check py for valid options"
+                f"Distance type {distance_type!r} is not known. Use "
+                f"{DistanceMetrics.WASSERSTEIN_1!r}, {DistanceMetrics.WASSERSTEIN_2!r} "
+                f"or {DistanceMetrics.BINNED_WASSERSTEIN_1!r}."
             )
 
         self.n_processes = n_processes
@@ -201,7 +202,9 @@ class EquivalentMonteCarlo:
             if self.variable.type == VariableTypes.DISTRIBUTION:
                 if len(self._adversary_array) < predicted_max_value:
                     print(
-                        f"Warning! Predicted maximum adversary size {predicted_max_value} greater than size of adversary array {len(self._adversary_array)}!"
+                        "Warning: The predicted largest adversary size "
+                        f"{predicted_max_value} is greater than the adversary "
+                        f"array size {len(self._adversary_array)}."
                     )
 
             # Only consider values below the max
@@ -599,7 +602,10 @@ def _comparison_statistic(lst: list[float] | np.ndarray, method: str) -> float:
     arr = np.asarray(lst)
 
     if method not in methods:
-        raise ValueError(f"Reporting statistic '{method}' is not supported.")
+        raise ValueError(
+            f"Reporting statistic '{method}' is not supported. Use one of "
+            f"{list(methods)}."
+        )
 
     return methods[method](arr)  # type: ignore
 

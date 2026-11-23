@@ -1,13 +1,13 @@
 # configs/quick.yaml — small, fast benchmarking_automation matrix.
 # A minimal sweep for smoke-tests and local iteration.
 # Pass with:
-#   benchmarking_automation --config configs/quick.yaml \
+#   signaloid-benchmarking --config src/signaloid_benchmarking/configs/quick.yaml \
 #       --path-to-application <demo>
 
 # Experiment matrix (small).
 representation_types: [Athens]
 representation_sizes: [16, 64]
-correlations: [Disabled]
+dependency_tracking: [None]
 reporting_methods: [Mean]
 
 # Distance / EMCC settings.

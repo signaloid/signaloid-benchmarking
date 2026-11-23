@@ -151,16 +151,16 @@ def main() -> int:
         )
     except (OSError, sqlite3.Error) as exc:
         print(
-            f"WARNING: db-vs-stdout check{scope} could not run on "
-            f"{args.tracing_db} and {args.stdout_path}: {exc}",
+            f"Warning: The db-vs-stdout check{scope} could not run on "
+            f"{args.tracing_db} and {args.stdout_path}. {exc}",
             file=sys.stderr,
         )
         return 2
 
     if recorded_count == 0:
         print(
-            f"WARNING: db-vs-stdout check{scope}: the tracing run recorded no "
-            f"Ux strings, so nothing was cross-checked."
+            f"Warning: The db-vs-stdout check{scope} found no Ux strings in "
+            f"the tracing database, so nothing was cross-checked."
         )
         return 1
 
@@ -172,7 +172,7 @@ def main() -> int:
         return 0
 
     print(
-        f"WARNING: db-vs-stdout check{scope}: {len(unprinted)} of "
+        f"Warning: In the db-vs-stdout check{scope}, {len(unprinted)} of "
         f"{recorded_count} recorded Ux string(s) were not printed by the same "
         f"run. The -O2 check compares stdout, so it no longer covers these."
     )
